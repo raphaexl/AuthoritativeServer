@@ -26,6 +26,7 @@ public class NetworkManagerClient : MonoBehaviour, INetEventListener
         period = 0f;
         _client = new NetManager(this);
         writer = new NetDataWriter();
+        netPeer = null;
     }
 
     protected void StartClient()
@@ -35,6 +36,10 @@ public class NetworkManagerClient : MonoBehaviour, INetEventListener
 
     protected void Connect(string connectionKey)
     {
+        if (netPeer != null && netPeer.ConnectionState == ConnectionState.Connected)
+        {
+            return;
+        }
         _client.Connect(SERVER_URL, PORT, connectionKey);
     }
 
@@ -45,14 +50,11 @@ public class NetworkManagerClient : MonoBehaviour, INetEventListener
 
     protected void Update()
     {
-        if (Input.GetKeyDown(KeyCode.Escape))
-        { _client.Stop();}
         if (_client != null) { _client.PollEvents(); }
         if (period >= TICK_INTERVAL)
         {
             period = 0f;
-            Debug.Log("Sending input data to the server");
-            SendInputToServer();
+            SendToServer();
         }
         period += Time.deltaTime;
     }
@@ -93,12 +95,11 @@ public class NetworkManagerClient : MonoBehaviour, INetEventListener
         { return;}
        // NetDataWriter netData = inputPacket.
         netPeer.Send(writer, DeliveryMethod.ReliableOrdered);
-        Debug.Log("Input info Sent");
     }
 
-    protected void SendToServer(Packets packets)
+    protected void SendToServer()
     {
-
+        SendInputToServer();
     }
 
     public void OnConnectionRequest(ConnectionRequest request)

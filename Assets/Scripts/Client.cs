@@ -16,6 +16,11 @@ public class RemotePlayer
     {
         Id = id;
         go = _go;
+        go.GetComponent<Player>().ID = id;
+        go.GetComponent<Player>().Id = id;
+        //Disable the camera of the enemy
+        go.transform.GetChild(0).gameObject.GetComponent<Camera>().gameObject.SetActive(false);
+        go.GetComponent<Player>().IsLocalPlayer = false;
     }
 }
 
@@ -29,9 +34,9 @@ public class Client : NetworkManagerClient
     List<RemotePlayer> _remotePlayers;
     GameObject _localPlayer;
 
-    int Id;
-    float   inputX;
-    float   inputY;
+    private int Id;
+    private Tools.NInput nInput;
+
 
     const string SERVER_URL = "localhost";
     const int PORT = 9050;
@@ -40,14 +45,17 @@ public class Client : NetworkManagerClient
     const float FPS_TICK = 0.02f;
 
 
-
+    bool istantiated = false;
+    bool isConnected = false;
     // Start is called before the first frame update
    new void Start()
     {
         Id = -1;
         base.Start();
         StartClient();
+        _localPlayer = null;
         _remotePlayers = new List<RemotePlayer>();
+        isConnected = false;
     }
 
     public void ConnectToServer()
@@ -76,33 +84,61 @@ public class Client : NetworkManagerClient
 
 
     public void PlayersInstanciation(int id, Vector3 position, Quaternion rotation, Color color, bool isLocalPlayer)
-    {
+        {
+        if (isLocalPlayer)
+        {
+            if (_localPlayer) { return; }
+        }
         RemotePlayer foundPlayer = _remotePlayers.Find(player => player.Id == id);
         if (foundPlayer == null)
         {
             GameObject go = Instantiate(playerPrefab, position, rotation);
-            go.GetComponent<MeshRenderer>().material.color = color;
-            go.SetActive(true);
+            go.transform.GetChild(1).GetComponent<MeshRenderer>().material.color = color;
             if (isLocalPlayer)
             {
+
+                if (istantiated)
+                {
+                    if (_localPlayer == null) { Debug.Log("Yopu found me"); }
+                }
+                Debug.LogFormat("Instantiation of Self {0} instanciated : {1}", _localPlayer != null, istantiated);
+                if (_localPlayer != null) { Debug.Log("Not normal");
+
+                }
+                else
+                {
+                    istantiated = true;
+                }
                 _localPlayer = go;
-                Debug.Log("Instanciation of Self");
+                _localPlayer.GetComponent<Player>().ID = id;
+                _localPlayer.GetComponent<Player>().Id = id;
+                _localPlayer.GetComponent<Player>().IsLocalPlayer = true;
             }
             else
             {
                 _remotePlayers.Add(new RemotePlayer(id, go));
-                Debug.Log("Instanciation of an enemy");
+                Debug.LogFormat("Instantiation of an enemy Position : ({0}, {0}, {0}) ", go.transform.position.x, go.transform.position.y, go.transform.position.z);
             }
+
         }
     }
 
     void MoveLocalplayer()
     {
         if (!_localPlayer) { return; }
-        float speed = 10f;
-        //client Side Prediction ?
-        _localPlayer.transform.Translate(Vector3.forward * inputY * speed * FPS_TICK);
-        _localPlayer.transform.Translate(Vector3.right * inputX * speed * FPS_TICK);
+        //float speed = 10f;
+        ////client Side Prediction ?
+        //_localPlayer.transform.Translate(Vector3.forward * inputY * speed * FPS_TICK);
+        //_localPlayer.transform.Translate(Vector3.right * inputX * speed * FPS_TICK);
+
+        /*PlayerController controller = _localPlayer.GetComponent<PlayerController>();
+        if (!controller)
+        {
+            Debug.Log("_Local Player is not being moved ?? No ??? ");
+        }
+        controller.ApplyInput(inputX, inputY, jump, FPS_TICK);*/
+        //Debug.Log($"Mouse X : {mouseX} Y : {mouseY}");
+        _localPlayer.GetComponent<PlayerController>().ApplyInput(nInput, FPS_TICK);
     }
 
 
@@ -117,17 +153,21 @@ public class Client : NetworkManagerClient
             case PacketType.Join:
                 {
                     int peerId = reader.GetInt();
-                    if (Id < 0){
+                    if (!isConnected){
+                        isConnected = true;
                         netPeer = peer;
                         Id = peerId;
                         ClientUIController.Instance.onClientConnected.text = $"connected to the server with : {peerId}";
                     }
-                    string msg = ClientUIController.Instance.onClientReceiveFromServer.text;
-                    if (Id != peerId)
+                    else
                     {
-                        msg += $"[SERVER] :  A Player Joined with id : {peerId}";
+                        string msg = ClientUIController.Instance.onClientReceiveFromServer.text;
+                        if (Id != peerId)
+                        {
+                            msg += $"[SERVER] :  A Player Joined with id : {peerId}";
+                        }
+                        ClientUIController.Instance.onClientReceiveFromServer.text = msg;
                     }
-                    ClientUIController.Instance.onClientReceiveFromServer.text = msg;
                 }
                 break;
             case PacketType.Spawn:
@@ -138,10 +178,11 @@ public class Client : NetworkManagerClient
                         Quaternion rotation;
                         Color color =  new Color();
 
+                        Debug.Log($"Spawn : {peerId}");
+
                         position.x = reader.GetFloat();
                         position.y = reader.GetFloat();
                         position.z = reader.GetFloat();
-
                         rotation.x = reader.GetFloat();
                         rotation.y = reader.GetFloat();
                         rotation.z = reader.GetFloat();
@@ -167,29 +208,32 @@ public class Client : NetworkManagerClient
                     }
                 }
                 break;
-            case PacketType.Movement:
+            case PacketType.ServerState:
                 {
                     int peerId = reader.GetInt();
-                    float sInputX = reader.GetFloat();
-                    float sInputY = reader.GetFloat();
+                    Vector3 position;
+                    Quaternion rotation;
 
-                    Debug.Log($" From server id : {peerId} : inputX : {sInputX} inputY : {sInputY}");
+                    position.x = reader.GetFloat();
+                    position.y = reader.GetFloat();
+                    position.z = reader.GetFloat();
+
+                    rotation.x = reader.GetFloat();
+                    rotation.y = reader.GetFloat();
+                    rotation.z = reader.GetFloat();
+                    rotation.w = reader.GetFloat();
                     if (peerId == Id) //Server Reconciliation
                     {
-                        Debug.Log("Sould Reconciliate with the server");
+                        //Debug.Log("Should Reconciliate with the server");
                         ServerReconciliation();
                     }
                     else
                     {
-                        Debug.Log("Updation the other players position");
-                        RemotePlayersMove(peerId, sInputX, sInputY);
+                       // Debug.Log("Updation the other players position but nope");
+                        RemotePlayersMove(peerId, position, rotation);
                     }
                 }
                 break;
-            case PacketType.ServerState:
-                {
-
-                }break;
             default:
                 ClientUIController.Instance.onClientReceiveFromServer.text = "UNKNOWN PACKET";
                 Debug.LogWarning("Received Unknown Packet From The Server");
@@ -200,18 +244,22 @@ public class Client : NetworkManagerClient
 
     void ServerReconciliation()
     {
-
+        
     }
 
-    void RemotePlayersMove(int id, float inputX, float inputY)
+    void RemotePlayersMove(int id, Vector3 position, Quaternion rotation)
     {
-        float speed = 10f;
+
         RemotePlayer foundPlayer = _remotePlayers.Find(player => player.Id == id);
         if (foundPlayer != null)
         {
-            foundPlayer.go.transform.Translate(Vector3.forward * inputY * speed * FPS_TICK);
-            foundPlayer.go.transform.Translate(Vector3.right * inputX * speed * FPS_TICK);
-        }
+            foundPlayer.go.transform.position = position;
+            foundPlayer.go.transform.rotation = rotation;
+            Debug.LogFormat("Player : [{0}] : {1}", id, rotation);
+        }                   
+
+        else
+            Debug.Log("Didn't Find Player");
     }
 
     void SelfRemove()
@@ -223,12 +271,19 @@ public class Client : NetworkManagerClient
      new private void Update()
     {
         base.Update();
-        inputX = Input.GetAxis("Horizontal");
-        inputY = Input.GetAxis("Vertical");
-        MoveLocalplayer();
-        UpdateServerInput();
+        nInput.inputX = Input.GetAxis("Horizontal");
+        nInput.inputY = Input.GetAxis("Vertical");
+        nInput.jump = Input.GetButtonDown("Jump");
+        nInput.mouseX = Input.GetAxis("Mouse X");
+        nInput.mouseY = Input.GetAxis("Mouse Y");
+        //if (nInput.inputX != 0 || nInput.inputY != 0 || nInput.jump)
+        {
+            MoveLocalplayer();
+            UpdateServerInput();
+        }
+
     }
-    
+
     void OthersRemove(int id)
     {
         RemotePlayer toDelete = _remotePlayers.Find(player => player.Id == id);
@@ -247,8 +302,11 @@ public class Client : NetworkManagerClient
         NetDataWriter inputData = new NetDataWriter();
         inputData.Put((int)PacketType.Movement);
         inputData.Put(Id);
-        inputData.Put(inputX);
-        inputData.Put(inputY);
+        inputData.Put(nInput.inputX);
+        inputData.Put(nInput.inputY);
+        inputData.Put(nInput.jump);
+        inputData.Put(nInput.mouseX);
+        inputData.Put(nInput.mouseY);
         base.writer = inputData;
     }
 

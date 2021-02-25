@@ -1,5 +1,4 @@
-﻿using System.Collections;
-using System.Collections.Generic;
+﻿
 using UnityEngine;
 using UnityEngine.UI;
 
@@ -10,8 +9,6 @@ public class ClientUIController : MonoBehaviour
     public  Text onClientConnected;
 
     public  Text onClientReceiveFromServer;
-
-
 
     private void Awake()
     {

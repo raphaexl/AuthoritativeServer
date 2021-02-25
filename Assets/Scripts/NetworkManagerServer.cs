@@ -15,11 +15,12 @@ public class ServerPlayer
 
     //Make the variables properties
 
-    public ServerPlayer(int id, NetPeer peer, GameObject gameObject)
+    public ServerPlayer(int id, NetPeer peer, GameObject _gameObject)
     {
         _id = id;
         _peer = peer;
-        _maingameObject = gameObject;
+        _maingameObject = _gameObject;
+        _maingameObject.transform.GetChild(0).gameObject.GetComponent<Camera>().gameObject.SetActive(false);
     }
 
     public void SetTransform(Vector3 pos, Quaternion rot)
@@ -30,7 +31,7 @@ public class ServerPlayer
 
    public void SetColor(Color color)
     {
-        _maingameObject.GetComponent<Renderer>().material.color = color;
+        _maingameObject.transform.GetChild(1).GetComponent<Renderer>().material.color = color;
     }
 
     public override string ToString()
@@ -53,7 +54,6 @@ public class NetworkManagerServer : MonoBehaviour, INetEventListener
     const int SERVER_SLEEP_TIME = 15;
     const float FPS_TICK = 0.02f;
     protected NetDataWriter writer;
-    private int Ids = 0;
     List<ServerPlayer> _serverPlayers;
     [SerializeField]
     GameObject playerPrefab;
@@ -68,46 +68,16 @@ public class NetworkManagerServer : MonoBehaviour, INetEventListener
         Debug.Log($"Server Start at Port {SERVER_PORT}");
     }
 
-    void SendInputToClient(int id, float analogOne, float analogTwo)
-    {
-        netListener.PeerConnectedEvent += (peer) =>
-        {
-            writer.Put(id);
-            writer.Put(analogOne);
-            writer.Put(analogTwo);
-            peer.Send(writer, DeliveryMethod.ReliableOrdered);
-        };
-    }
-
-    void ReceiveInputFromClient()
-    {
-        netListener.NetworkReceiveEvent += (fromPeer, dataReader, deliveryMethod) =>
-        {
-            Debug.LogFormat(" id : {0} ", dataReader.GetInt());
-            Debug.LogFormat(" Analog 1 : {0} ", dataReader.GetFloat());
-            Debug.LogFormat(" Analog 2 : {0} ", dataReader.GetFloat());
-            dataReader.Recycle();
-        };
-    }
-
-
-    void SendToClient() 
-    {
-        SendInputToClient(0, 2.5f, 3.0f);
-    }
-
+  
+   
     void ReceiveClientData()
     {
-        ReceiveInputFromClient();
+      
     }
 
   
     private void Update()
     {
-        if (Input.GetKeyDown(KeyCode.Escape))
-        {
-            _server.Stop();
-        }
         _server.PollEvents();
     }
 
@@ -123,14 +93,8 @@ public class NetworkManagerServer : MonoBehaviour, INetEventListener
 
     Vector3 RandomPosition()
     {
-        return (new Vector3(Random.Range(Xmin, Xmax), 0.5f, Random.Range(Zmin, Zmax)));
-    }
-
-    Quaternion RandomRotation()
-    {
-        Quaternion quat = Quaternion.identity;
-        quat.eulerAngles = new Vector3(Random.Range(0f, 180f), Random.Range(0f, 180f), Random.Range(0, 180f));
-        return (quat);
+         return (new Vector3(Random.Range(Xmin, Xmax), 2.0f, Random.Range(Zmin, Zmax)));
+        //return (new Vector3(0, 2.0f, 0));
     }
 
     Color RandomColor()
@@ -138,7 +102,33 @@ public class NetworkManagerServer : MonoBehaviour, INetEventListener
         return (new Color(Random.Range(0f, 1f), Random.Range(0, 1f), Random.Range(0, 1f), 1.0f));
     }
 
-    
+    void SendToAllClients(NetDataWriter netData)
+    {
+        _server.SendToAll(netData, DeliveryMethod.ReliableOrdered);
+    }
+
+
+    void PlayersPositionSynchronization()
+    {
+        _serverPlayers.ForEach(player =>
+        {
+            NetDataWriter transformData = new NetDataWriter();
+
+            Vector3 position = player._maingameObject.transform.position;
+            Quaternion rotation = player._maingameObject.transform.rotation;
+
+            transformData.Put((int)PacketType.ServerState);
+            transformData.Put(player._id);
+            transformData.Put(position.x);
+            transformData.Put(position.y);
+            transformData.Put(position.z);
+            transformData.Put(rotation.x);
+            transformData.Put(rotation.y);
+            transformData.Put(rotation.z);
+            transformData.Put(rotation.w);
+            SendToAllClients(transformData);
+        });
+    }
 
     void SpawnPlayers()
     {
@@ -149,39 +139,39 @@ public class NetworkManagerServer : MonoBehaviour, INetEventListener
 
            // Debug.Log(player);
             spawnPacket.Put((int)PacketType.Spawn);
-            spawnPacket.Put((int)player._id);
-            //Debug.Log($"The Peer Should Spawn Id : {player._id}");
+            spawnPacket.Put(player._id);
 
             Vector3 position  = player._maingameObject.transform.position;
             Quaternion rotation = player._maingameObject.transform.rotation;
-            Color color = player._maingameObject.GetComponent<Renderer>().material.color;
+            Color color = player._maingameObject.transform.GetChild(1).GetComponent<Renderer>().material.color;
 
             
             spawnPacket.Put(position.x);
             spawnPacket.Put(position.y);
             spawnPacket.Put(position.z);
+
             spawnPacket.Put(rotation.x);
-            spawnPacket.Put(rotation.y);
+            spawnPacket.Put(rotation.y); 
             spawnPacket.Put(rotation.z);
             spawnPacket.Put(rotation.w);
+
             spawnPacket.Put(color.r);
             spawnPacket.Put(color.g);
             spawnPacket.Put(color.b);
-            _server.SendToAll(spawnPacket, DeliveryMethod.ReliableOrdered);
+            SendToAllClients(spawnPacket);
         });
     }
 
     void   ServerPlayersListAdd(NetPeer peer)
     {
-       
+        ServerPlayer serverPlayer = _serverPlayers.Find(player => player._id == peer.Id);
+        if (serverPlayer != null) { Debug.LogError("Should never happen :::::::: !"); return; }
+
         Vector3 position = RandomPosition();
-        Quaternion rotation = RandomRotation();
         Color color = RandomColor();
 
-        ServerPlayer serverPlayer = new ServerPlayer(Ids, peer, Instantiate(playerPrefab, position, rotation));
-       // serverPlayer.SetTransform(position, rotation);
+        serverPlayer = new ServerPlayer(peer.Id, peer, Instantiate(playerPrefab, position, Quaternion.identity));
         serverPlayer.SetColor(color);
-
         _serverPlayers.Add(serverPlayer);
     }
 
@@ -192,17 +182,20 @@ public class NetworkManagerServer : MonoBehaviour, INetEventListener
         _serverPlayers.Remove(serverPlayer);
     }
 
-    void ServerPlayersListMovePlayers(NetPeer peer, float inputX,  float inputY)
+    void ServerPlayersListMovePlayers(NetPeer peer, Tools.NInput nInput)
     {
-        float speed = 10f;
         ServerPlayer serverPlayer = _serverPlayers.Find(player => player._id == peer.Id);
         
         if (serverPlayer != null)
         {
-            serverPlayer._maingameObject.transform.Translate(Vector3.forward * inputY * speed * FPS_TICK);
-            serverPlayer._maingameObject.transform.Translate(Vector3.right * inputX * speed * FPS_TICK);
+           // serverPlayer._maingameObject.GetComponent<Player>
+            serverPlayer._maingameObject.GetComponent<PlayerController>().ApplyInput(nInput, FPS_TICK);
+            //serverPlayer._maingameObject.transform.Translate(Vector3.forward * inputY * speed * FPS_TICK);
+            //serverPlayer._maingameObject.transform.Translate(Vector3.right * inputX * speed * FPS_TICK);
         }
     }
+
+
 
 
     public void OnPeerConnected(NetPeer peer)
@@ -211,24 +204,21 @@ public class NetworkManagerServer : MonoBehaviour, INetEventListener
         ServerPlayersListAdd(peer);
         NetDataWriter joinedPacket = new NetDataWriter();
         joinedPacket.Put((int)PacketType.Join);
-        joinedPacket.Put((int)peer.Id);
-        _server.SendToAll(joinedPacket, DeliveryMethod.ReliableOrdered);
-
+        joinedPacket.Put(peer.Id);
+        SendToAllClients(joinedPacket);
         SpawnPlayers();
-        Ids++;
     }
 
     public void OnPeerDisconnected(NetPeer peer, DisconnectInfo disconnectInfo)
     {
         //Remove the player from the server
         ServerPlayersListRemove(peer);
-        Ids--;
         //Send The Player Leave to Every one
         NetDataWriter leavePacket = new NetDataWriter();
         leavePacket.Put((int)PacketType.Leave);
-        leavePacket.Put((int)peer.Id);
-        _server.SendToAll(leavePacket, DeliveryMethod.ReliableOrdered);
-        Debug.LogFormat("[SERVER] Peer : {0} disconnected : {0}", peer.Id, disconnectInfo.Reason);
+        leavePacket.Put(peer.Id);
+        SendToAllClients(leavePacket);
+        Debug.LogFormat("[SERVER] Peer : {0} disconnected : {0} there are {0} players remaining", peer.Id, disconnectInfo.Reason, _serverPlayers.Count);
     }
 
     public void OnNetworkError(IPEndPoint endPoint, SocketError socketError)
@@ -246,16 +236,16 @@ public class NetworkManagerServer : MonoBehaviour, INetEventListener
             case PacketType.Movement:
                 {
                     int peerId = reader.GetInt();
-                    float inputX = reader.GetFloat();
-                    float inputY = reader.GetFloat();
+                    Tools.NInput nInput;
 
-                    ServerPlayersListMovePlayers(peer, inputX, inputY);
-                    NetDataWriter mvtData = new NetDataWriter();
-                    mvtData.Put((int)PacketType.Movement);
-                    mvtData.Put(peerId);
-                    mvtData.Put(inputX);
-                    mvtData.Put(inputY);
-                    _server.SendToAll(mvtData, DeliveryMethod.ReliableOrdered);
+                    nInput.inputX = reader.GetFloat();
+                    nInput.inputY = reader.GetFloat();
+                    nInput.jump = reader.GetBool();
+                    nInput.mouseX = reader.GetFloat();
+                    nInput.mouseY = reader.GetFloat();
+
+                    ServerPlayersListMovePlayers(peer, nInput);
+                    PlayersPositionSynchronization();
                 }
                 break;
             default:
