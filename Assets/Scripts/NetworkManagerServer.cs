@@ -12,6 +12,9 @@ public class ServerPlayer
     public int _id;
     public NetPeer _peer;
     public GameObject _maingameObject;
+    public List<PendingInput> _clientInput;
+    public int _lastProcessedInput;
+
 
     //Make the variables properties
 
@@ -21,6 +24,7 @@ public class ServerPlayer
         _peer = peer;
         _maingameObject = _gameObject;
         _maingameObject.transform.GetChild(0).gameObject.GetComponent<Camera>().gameObject.SetActive(false);
+        _clientInput = new List<PendingInput>();
     }
 
     public void SetTransform(Vector3 pos, Quaternion rot)
@@ -51,13 +55,14 @@ public class NetworkManagerServer : MonoBehaviour, INetEventListener
     const int SERVER_PORT = 9050;
     const int MAX_CONNECTION = 10;
     const string CONNECTION_KEY = "KEYOFCONNCETION";
-    const int SERVER_SLEEP_TIME = 15;
-    const float FPS_TICK = 0.02f;
+    const float SERVER_UPDATE_RATE = 3;
+    private Coroutine updateRoutine;
+
     protected NetDataWriter writer;
     List<ServerPlayer> _serverPlayers;
     [SerializeField]
     GameObject playerPrefab;
-
+    
 
     void Start()
     {
@@ -66,16 +71,99 @@ public class NetworkManagerServer : MonoBehaviour, INetEventListener
         _server.Start(SERVER_PORT);
         _serverPlayers = new List<ServerPlayer>();
         Debug.Log($"Server Start at Port {SERVER_PORT}");
+        updateRoutine = StartCoroutine(serverUpdate(SERVER_UPDATE_RATE));
     }
 
-  
-   
+    /*private void OnEnable()
+    {
+        updateRoutine = StartCoroutine(serverUpdate(SERVER_UPDATE_RATE));
+    }
+    private void OnDisable()
+    {
+        StopCoroutine(updateRoutine);
+        updateRoutine = null;
+    }*/
+
     void ReceiveClientData()
     {
       
     }
 
-  
+    IEnumerator serverUpdate(float update_rate)
+    {
+        var wait = new WaitForSecondsRealtime(1.0f / update_rate);
+        while (true)
+        {
+            // server update loop
+            processClientsInput();  //Process each client input 
+            sendWorldStateToClients(); //sendWorldState to all client
+            //Render world if we were to
+            yield return wait;
+        }
+    }
+
+
+    //Basic Rule Checker
+    bool checkInputValidity(PendingInput pendingInput)
+    {
+        if (Mathf.Abs(pendingInput.nTime) < 1 / 140) //let pretend 120
+           // if (Mathf.Abs(pendingInput.nTime) > 1 / 40)
+        {
+            return false;
+        }
+        return true;
+    }
+
+    void ApplyClientPendingInputs(ServerPlayer serverPlayer)
+    {
+        serverPlayer._clientInput.ForEach(pendingInput =>
+        {
+            //if (checkInputValidity(pendingInput))
+            {
+                //Apply  client pending Inputs
+                serverPlayer._maingameObject.GetComponent<PlayerController>().ApplyInput(pendingInput.nInput, pendingInput.nTime);
+                serverPlayer._lastProcessedInput = pendingInput.sequenceNumber;
+            }
+          /*  else
+            {
+                Debug.Log($"Player : {serverPlayer._id} is cheating");
+            }*/
+        });
+        serverPlayer._clientInput.Clear();
+    }
+
+    void processClientsInput()
+    {
+        _serverPlayers.ForEach(serverPlayer =>
+        {
+            ApplyClientPendingInputs(serverPlayer);
+        });
+    }
+
+    void sendWorldStateToClients()
+    {
+        _serverPlayers.ForEach(player =>
+        {
+            NetDataWriter transformData = new NetDataWriter();
+
+            Vector3 position = player._maingameObject.transform.position;
+            Quaternion rotation = player._maingameObject.transform.rotation;
+
+            transformData.Put((int)PacketType.ServerState);
+            transformData.Put(player._id);
+            transformData.Put(player._lastProcessedInput);
+            transformData.Put(position.x);
+            transformData.Put(position.y);
+            transformData.Put(position.z);
+            transformData.Put(rotation.x);
+            transformData.Put(rotation.y);
+            transformData.Put(rotation.z);
+            transformData.Put(rotation.w);
+            Debug.Log($" New Position :({position.x}, {position.y}, {position.z})");
+            SendToAllClients(transformData);
+        });
+    }
+
     private void Update()
     {
         _server.PollEvents();
@@ -84,6 +172,8 @@ public class NetworkManagerServer : MonoBehaviour, INetEventListener
     private void OnDestroy()
     {
         if (_server != null) { _server.Stop(); }
+        StopCoroutine(updateRoutine);
+        updateRoutine = null;
     }
 
     const float Zmax = 5f;
@@ -107,28 +197,6 @@ public class NetworkManagerServer : MonoBehaviour, INetEventListener
         _server.SendToAll(netData, DeliveryMethod.ReliableOrdered);
     }
 
-
-    void PlayersPositionSynchronization()
-    {
-        _serverPlayers.ForEach(player =>
-        {
-            NetDataWriter transformData = new NetDataWriter();
-
-            Vector3 position = player._maingameObject.transform.position;
-            Quaternion rotation = player._maingameObject.transform.rotation;
-
-            transformData.Put((int)PacketType.ServerState);
-            transformData.Put(player._id);
-            transformData.Put(position.x);
-            transformData.Put(position.y);
-            transformData.Put(position.z);
-            transformData.Put(rotation.x);
-            transformData.Put(rotation.y);
-            transformData.Put(rotation.z);
-            transformData.Put(rotation.w);
-            SendToAllClients(transformData);
-        });
-    }
 
     void SpawnPlayers()
     {
@@ -182,22 +250,6 @@ public class NetworkManagerServer : MonoBehaviour, INetEventListener
         _serverPlayers.Remove(serverPlayer);
     }
 
-    void ServerPlayersListMovePlayers(NetPeer peer, Tools.NInput nInput)
-    {
-        ServerPlayer serverPlayer = _serverPlayers.Find(player => player._id == peer.Id);
-        
-        if (serverPlayer != null)
-        {
-           // serverPlayer._maingameObject.GetComponent<Player>
-            serverPlayer._maingameObject.GetComponent<PlayerController>().ApplyInput(nInput, FPS_TICK);
-            //serverPlayer._maingameObject.transform.Translate(Vector3.forward * inputY * speed * FPS_TICK);
-            //serverPlayer._maingameObject.transform.Translate(Vector3.right * inputX * speed * FPS_TICK);
-        }
-    }
-
-
-
-
     public void OnPeerConnected(NetPeer peer)
     {
         Debug.LogFormat("A Peer is connected Id : {0}", peer.Id);
@@ -235,23 +287,31 @@ public class NetworkManagerServer : MonoBehaviour, INetEventListener
         {
             case PacketType.Movement:
                 {
+                    PendingInput pendingInput;
                     int peerId = reader.GetInt();
-                    Tools.NInput nInput;
+                    pendingInput = new PendingInput();
 
-                    nInput.inputX = reader.GetFloat();
-                    nInput.inputY = reader.GetFloat();
-                    nInput.jump = reader.GetBool();
-                    nInput.mouseX = reader.GetFloat();
-                    nInput.mouseY = reader.GetFloat();
-
-                    ServerPlayersListMovePlayers(peer, nInput);
-                    PlayersPositionSynchronization();
+                    pendingInput.sequenceNumber = reader.GetInt();
+                    pendingInput.nTime = reader.GetFloat();
+                    pendingInput.nInput.inputX = reader.GetFloat();
+                    pendingInput.nInput.inputY = reader.GetFloat();
+                    pendingInput.nInput.jump = reader.GetBool();
+                    pendingInput.nInput.mouseX = reader.GetFloat();
+                    pendingInput.nInput.mouseY = reader.GetFloat();
+                    UpdateClientInputPendingList(peerId, pendingInput);
                 }
                 break;
             default:
                 Debug.Log($"Receive Unknown packet from the client : {peer.Id}");
                 break;
         }
+    }
+
+    public void UpdateClientInputPendingList(int peerId, PendingInput pendingInput)
+    {
+        ServerPlayer serverPlayer = _serverPlayers.Find(player => player._id == peerId);
+        if (serverPlayer == null) { return; }
+        serverPlayer._clientInput.Add(pendingInput);
     }
 
     public void OnNetworkReceiveUnconnected(IPEndPoint remoteEndPoint, NetPacketReader reader, UnconnectedMessageType messageType)

@@ -11,6 +11,7 @@ public class RemotePlayer
 {
     public int Id;
     public GameObject go;
+    public Vector3 []position_buff;
 
     public RemotePlayer(int id, GameObject _go)
     {
@@ -24,6 +25,28 @@ public class RemotePlayer
     }
 }
 
+public struct PendingInput
+{
+    public Tools.NInput nInput;
+    public float nTime; //When did we set that input (received it);
+    public int sequenceNumber;
+
+    public PendingInput(Tools.NInput _nInput, float _nTime, int seqNumber)
+    {
+        this.nInput = _nInput;
+        this.nTime = _nTime;
+        this.sequenceNumber = seqNumber;
+    }
+}
+
+public struct ServerState
+{
+    public int peerId;
+    public Vector3 position;
+    public Quaternion rotation;
+    public int lastProcessedInput;
+};
+
 public class Client : NetworkManagerClient
 {
     const string CONNECTION_KEY = "KEYOFCONNCETION";
@@ -35,18 +58,38 @@ public class Client : NetworkManagerClient
     GameObject _localPlayer;
 
     private int Id;
-    private Tools.NInput nInput;
+    private Tools.NInput currentNInput;
+    private Tools.NInput previousNInput;
 
+    //List of Pending Input
+    List<PendingInput> _pendingNInputs;
+    float _previousTime;
+    //List of Positions for Lag Come
+
+    [SerializeField]
+    float Lag;
+    [SerializeField]
+    bool clientSidePrediction;
+    [SerializeField]
+    bool serverReconciliation;
+    [SerializeField]
+    bool interpolation;
+
+    int _inputSeqNumber;
 
     const string SERVER_URL = "localhost";
     const int PORT = 9050;
     const int MAX_LENGTH = 500;
     const int CLIENT_SLEEP_TIME = 15;
-    const float FPS_TICK = 0.02f;
+    const float GAME_FPS = 50f;
 
+    
 
     bool istantiated = false;
     bool isConnected = false;
+
+    Coroutine customUpdateCoroutine;
+
     // Start is called before the first frame update
    new void Start()
     {
@@ -56,6 +99,17 @@ public class Client : NetworkManagerClient
         _localPlayer = null;
         _remotePlayers = new List<RemotePlayer>();
         isConnected = false;
+        clientSidePrediction = false;
+        serverReconciliation = false;
+        interpolation = false;
+        _inputSeqNumber = 0;
+        _pendingNInputs = new List<PendingInput>();
+        _previousTime = Time.time;
+    }
+
+    private void OnEnable()
+    {
+        customUpdateCoroutine = StartCoroutine(CustomUpdate(GAME_FPS));
     }
 
     public void ConnectToServer()
@@ -65,6 +119,22 @@ public class Client : NetworkManagerClient
         base.Connect(CONNECTION_KEY);
     }
 
+    IEnumerator CustomUpdate(float fpsRate)
+    {
+        WaitForSeconds wait = new WaitForSeconds(1.0f / fpsRate);
+
+        while (true)
+        {
+            processInputs();
+            yield return wait;
+        }
+    }
+
+    private void OnDisable()
+    {
+        StopCoroutine(customUpdateCoroutine);
+        customUpdateCoroutine = null;
+    }
 
     public void DiconnectToServer()
     {
@@ -79,6 +149,7 @@ public class Client : NetworkManagerClient
 
     public override void  OnPeerConnected(NetPeer peer)
     {
+        ClientUIController.Instance.OnEnableToogle();
         Debug.Log(" You are connected is it to the Server ?? "+ peer.Id);
     }
 
@@ -123,26 +194,59 @@ public class Client : NetworkManagerClient
         }
     }
 
-    void MoveLocalplayer()
+    void MoveLocalplayer(Tools.NInput nInput, float fpsRate)
     {
         if (!_localPlayer) { return; }
-        //float speed = 10f;
-        ////client Side Prediction ?
-        //_localPlayer.transform.Translate(Vector3.forward * inputY * speed * FPS_TICK);
-        //_localPlayer.transform.Translate(Vector3.right * inputX * speed * FPS_TICK);
-
-        /*PlayerController controller = _localPlayer.GetComponent<PlayerController>();
-        if (!controller)
-        {
-            Debug.Log("_Local Player is not being moved ?? No ??? ");
-        }
-        controller.ApplyInput(inputX, inputY, jump, FPS_TICK);*/
-        //Debug.Log($"Mouse X : {mouseX} Y : {mouseY}");
-        _localPlayer.GetComponent<PlayerController>().ApplyInput(nInput, FPS_TICK);
+        _localPlayer.GetComponent<PlayerController>().ApplyInput(nInput, fpsRate);
     }
 
+    //Note the input is not smooth....
+    bool UpdateInput()
+    {
+        float deltaInputX = Mathf.Abs(currentNInput.inputX - previousNInput.inputX);
+        float deltaInputY = Mathf.Abs(currentNInput.inputY - previousNInput.inputY);
+        float deltaMouseX = 0; //Mathf.Abs(currentNInput.mouseX - previousNInput.mouseX);
+        float deltaMouseY = 0;// Mathf.Abs(currentNInput.mouseY - previousNInput.mouseY);
+        float epsilon = 1e-3f;
 
+        return (
+            currentNInput.jump || deltaInputX > epsilon || deltaInputY > epsilon
+            || deltaMouseX > epsilon || deltaMouseY > epsilon || Mathf.Abs(currentNInput.inputX) > epsilon
+            || Mathf.Abs(currentNInput.inputY) > epsilon
+            );
+    }
 
+   
+    void processInputs()
+    {
+      //  float currentTime = Time.realtimeSinceStartup; //time;
+        float currentTime = Time.time;
+        float dt_sec = currentTime - _previousTime;
+
+        if (!UpdateInput()) { return; } //Nothing to process
+        PendingInput pendingInput;
+
+        pendingInput = new PendingInput(currentNInput, dt_sec, _inputSeqNumber++);
+        //Send the input to the server here
+        SendInputToServer(pendingInput);
+        {
+            //If there is client side prediction enabled do it
+            if (clientSidePrediction)
+            {
+                MoveLocalplayer(currentNInput, dt_sec); //may be Time.deltaTime should do as well ???
+            }
+        }
+        _pendingNInputs.Add(pendingInput);
+        _previousTime = currentTime;
+        previousNInput = currentNInput;
+    }
+    List<PlayerViewClient>Listofplayerviews;
+
+    foreach(PlayerViewClient P in Listofplayerviews)
+        {
+        if (idofrpc == P.id)
+        P.ReceiveRPC(params);
+}
     public override void OnNetworkReceive(NetPeer peer, NetPacketReader reader, DeliveryMethod deliveryMethod)
     {
         PacketType type;
@@ -210,27 +314,25 @@ public class Client : NetworkManagerClient
                 break;
             case PacketType.ServerState:
                 {
-                    int peerId = reader.GetInt();
-                    Vector3 position;
-                    Quaternion rotation;
+                    ServerState serverState =  new ServerState();
 
-                    position.x = reader.GetFloat();
-                    position.y = reader.GetFloat();
-                    position.z = reader.GetFloat();
-
-                    rotation.x = reader.GetFloat();
-                    rotation.y = reader.GetFloat();
-                    rotation.z = reader.GetFloat();
-                    rotation.w = reader.GetFloat();
-                    if (peerId == Id) //Server Reconciliation
+                    serverState.peerId = reader.GetInt();
+                    serverState.lastProcessedInput = reader.GetInt();
+                    serverState.position.x = reader.GetFloat();
+                    serverState.position.y = reader.GetFloat();
+                    serverState.position.z = reader.GetFloat();
+                    serverState.rotation.x = reader.GetFloat();
+                    serverState.rotation.y = reader.GetFloat();
+                    serverState.rotation.z = reader.GetFloat();
+                    serverState.rotation.w = reader.GetFloat();
+                    if (serverState.peerId == Id) //Server Reconciliation
                     {
-                        //Debug.Log("Should Reconciliate with the server");
-                        ServerReconciliation();
+                        ServerAuthoritativeState(serverState);
+                        ServerReconciliation(serverState);
                     }
                     else
                     {
-                       // Debug.Log("Updation the other players position but nope");
-                        RemotePlayersMove(peerId, position, rotation);
+                        RemotePlayersMove(serverState);
                     }
                 }
                 break;
@@ -242,24 +344,71 @@ public class Client : NetworkManagerClient
         reader.Recycle();
     }
 
-    void ServerReconciliation()
+    void ServerAuthoritativeState(ServerState serverState)
     {
-        
+        //Set server Authoritative Position and rotation
+        /*  transform.position = serverState.position;
+          transform.rotation = serverState.rotation;*/
+        /* _localPlayer.transform.position = serverState.position;
+         _localPlayer.transform.rotation = serverState.rotation;*/
+       // Debug.Log($"Authoritative State --> Position : (x : {serverState.position.x} y : {serverState.position.y} z : {serverState.position.z})");
+       _localPlayer.GetComponent<PlayerController>().ApplyTransform(serverState.position, serverState.rotation);
     }
 
-    void RemotePlayersMove(int id, Vector3 position, Quaternion rotation)
+    void ServerReconciliation(ServerState serverState)
     {
-
-        RemotePlayer foundPlayer = _remotePlayers.Find(player => player.Id == id);
-        if (foundPlayer != null)
+        if (serverReconciliation)
         {
-            foundPlayer.go.transform.position = position;
-            foundPlayer.go.transform.rotation = rotation;
-            Debug.LogFormat("Player : [{0}] : {1}", id, rotation);
-        }                   
-
+            List<PendingInput> toRemove = new List<PendingInput>();
+            _pendingNInputs.ForEach(pendingInput =>
+            {
+                if (pendingInput.sequenceNumber <= serverState.lastProcessedInput)
+                {
+                    toRemove.Add(pendingInput);
+                    // _pendingNInputs.Remove(pendingInput);
+                }
+                else
+                {
+                    Debug.Log($"NOT PROCESSED BY THE SERVER {pendingInput.sequenceNumber} last processed by the server : ({serverState.lastProcessedInput})");
+                    //Apply the input
+                    MoveLocalplayer(pendingInput.nInput, pendingInput.nTime);
+                }
+            });
+            toRemove.ForEach(pendingInput =>
+            {
+                _pendingNInputs.Remove(pendingInput);
+            });
+            toRemove.Clear();
+        }
         else
-            Debug.Log("Didn't Find Player");
+        {
+            //Drop all recorded inputs
+            _pendingNInputs.Clear();
+        }
+   
+    }
+
+    void RemotePlayersMove(ServerState serverState)
+    {
+        RemotePlayer foundPlayer = _remotePlayers.Find(player => player.Id == serverState.peerId);
+        if (foundPlayer == null) { Debug.Log("Should never happen !"); return; }
+        if (!interpolation)
+        {
+            foundPlayer.go.transform.position = serverState.position;
+            foundPlayer.go.transform.rotation = serverState.rotation;
+        }
+        else
+        {
+            //Add the state to the positions buffer
+            float timestamp = Time.time;
+            //foundPlayer.position_buff.add({ timestamp,  position, rotation })
+        }
+       
+    }
+
+    void EntitiesInterpolation()
+    {
+        //Interpolation for remote clients
     }
 
     void SelfRemove()
@@ -271,44 +420,26 @@ public class Client : NetworkManagerClient
      new private void Update()
     {
         base.Update();
-        nInput.inputX = Input.GetAxis("Horizontal");
-        nInput.inputY = Input.GetAxis("Vertical");
-        nInput.jump = Input.GetButtonDown("Jump");
-        nInput.mouseX = Input.GetAxis("Mouse X");
-        nInput.mouseY = Input.GetAxis("Mouse Y");
-        //if (nInput.inputX != 0 || nInput.inputY != 0 || nInput.jump)
-        {
-            MoveLocalplayer();
-            UpdateServerInput();
-        }
-
+        if (!isConnected){ return; }
+        currentNInput.inputX = Input.GetAxis("Horizontal");
+        currentNInput.inputY = Input.GetAxis("Vertical");
+        currentNInput.jump = Input.GetButtonDown("Jump");
+        currentNInput.mouseX = Input.GetAxis("Mouse X");
+        currentNInput.mouseY = Input.GetAxis("Mouse Y");
+        //Never do this but :-)
+        clientSidePrediction = ClientUIController.Instance.clientSidePrediction;
+        serverReconciliation = ClientUIController.Instance.serverReconcilation;
+        interpolation = ClientUIController.Instance.lagCompensation;
     }
 
     void OthersRemove(int id)
     {
         RemotePlayer toDelete = _remotePlayers.Find(player => player.Id == id);
-        Debug.LogFormat("Found : {0} ", toDelete.Id);
-        if (toDelete.go != null)
-        {
-            Debug.Log($"Remove Gamobject : {toDelete.go}");
-        }
         Destroy(toDelete.go);
         _remotePlayers.Remove(toDelete);
-        Debug.Log($"Removed {id}");
     }
 
-    void UpdateServerInput()
-    {
-        NetDataWriter inputData = new NetDataWriter();
-        inputData.Put((int)PacketType.Movement);
-        inputData.Put(Id);
-        inputData.Put(nInput.inputX);
-        inputData.Put(nInput.inputY);
-        inputData.Put(nInput.jump);
-        inputData.Put(nInput.mouseX);
-        inputData.Put(nInput.mouseY);
-        base.writer = inputData;
-    }
+    
 
     void ReceiveInputFromServer()
     {

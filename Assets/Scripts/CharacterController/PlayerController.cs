@@ -50,12 +50,26 @@ public class PlayerController : MonoBehaviour
        
         xRotation -= nIpunt.mouseY;
         xRotation = Mathf.Clamp(xRotation, -90f, 90f);
-        transform.Rotate(Vector3.up * nIpunt.mouseX);
-        cameraTrans.localRotation = Quaternion.Euler(xRotation, 0, 0);
+        // transform.Rotate(Vector3.up * nIpunt.mouseX);
+        //cameraTrans.localRotation = Quaternion.Euler(xRotation, 0, 0);
 
-        /* velocity.y += gravity * fpsTick;
+         /*velocity.y += gravity * fpsTick;
          controller.Move(velocity * fpsTick);*/
     }
+
+    public void ApplyTransform(Vector3 position, Quaternion rotation)
+    {
+        //Debug.Log($"Current Position : ({transform.position.x}, {transform.position.y}, {transform.position.z}) Rotation : ({transform.rotation.x}, {transform.rotation.y}, {transform.rotation.z})");
+        //Debug.Log($"Authorative Position : ({position.x}, {position.y}, {position.z}) Rotation : ({rotation.x}, {rotation.y}, {rotation.z})");
+        transform.position = position;
+        transform.rotation = rotation;
+    }
+
+    public void ApplyCameraRotation(float mouseX, float mouseY)
+    {
+
+    }
+
 
     private void Update()
     {
