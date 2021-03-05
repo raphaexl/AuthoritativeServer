@@ -9,6 +9,7 @@ public enum PacketType
     Leave,
     Movement,
     ServerState,
+    RPC,
 }
 
 public struct InputPacket : INetSerializable

@@ -7,6 +7,14 @@ using System.Net;
 using System.Net.Sockets;
 
 
+
+public struct ServerRPCPacket
+{
+    public NetPeer netPeer;
+    public RPCPacket rpcPacket;
+}
+
+
 public class ServerPlayer
 {
     public int _id;
@@ -60,9 +68,10 @@ public class NetworkManagerServer : MonoBehaviour, INetEventListener
 
     protected NetDataWriter writer;
     List<ServerPlayer> _serverPlayers;
+    List<ServerRPCPacket> _rPCPackets;
     [SerializeField]
     GameObject playerPrefab;
-    
+
 
     void Start()
     {
@@ -70,6 +79,7 @@ public class NetworkManagerServer : MonoBehaviour, INetEventListener
         writer = new NetDataWriter();
         _server.Start(SERVER_PORT);
         _serverPlayers = new List<ServerPlayer>();
+        _rPCPackets = new List<ServerRPCPacket>();
         Debug.Log($"Server Start at Port {SERVER_PORT}");
         updateRoutine = StartCoroutine(serverUpdate(SERVER_UPDATE_RATE));
     }
@@ -86,7 +96,7 @@ public class NetworkManagerServer : MonoBehaviour, INetEventListener
 
     void ReceiveClientData()
     {
-      
+
     }
 
     IEnumerator serverUpdate(float update_rate)
@@ -107,7 +117,7 @@ public class NetworkManagerServer : MonoBehaviour, INetEventListener
     bool checkInputValidity(PendingInput pendingInput)
     {
         if (Mathf.Abs(pendingInput.nTime) < 1 / 140) //let pretend 120
-           // if (Mathf.Abs(pendingInput.nTime) > 1 / 40)
+                                                     // if (Mathf.Abs(pendingInput.nTime) > 1 / 40)
         {
             return false;
         }
@@ -124,10 +134,10 @@ public class NetworkManagerServer : MonoBehaviour, INetEventListener
                 serverPlayer._maingameObject.GetComponent<PlayerController>().ApplyInput(pendingInput.nInput, pendingInput.nTime);
                 serverPlayer._lastProcessedInput = pendingInput.sequenceNumber;
             }
-          /*  else
-            {
-                Debug.Log($"Player : {serverPlayer._id} is cheating");
-            }*/
+            /*  else
+              {
+                  Debug.Log($"Player : {serverPlayer._id} is cheating");
+              }*/
         });
         serverPlayer._clientInput.Clear();
     }
@@ -140,7 +150,7 @@ public class NetworkManagerServer : MonoBehaviour, INetEventListener
         });
     }
 
-    void sendWorldStateToClients()
+    void sendTransformsToClients()
     {
         _serverPlayers.ForEach(player =>
         {
@@ -159,9 +169,31 @@ public class NetworkManagerServer : MonoBehaviour, INetEventListener
             transformData.Put(rotation.y);
             transformData.Put(rotation.z);
             transformData.Put(rotation.w);
-            Debug.Log($" New Position :({position.x}, {position.y}, {position.z})");
+            //Debug.Log($" New Position :({position.x}, {position.y}, {position.z})");
             SendToAllClients(transformData);
+
+            //$$$$$$$
         });
+    }
+
+    void sendRPCToClients()
+    {
+        _rPCPackets.ForEach(serverRPCPacket =>
+       {
+        //   if (peer.Id == rpcPacket.senderPeerId)
+               ProcessClientRPC(serverRPCPacket.netPeer,
+                   serverRPCPacket.rpcPacket.rpcTarget,
+                   serverRPCPacket.rpcPacket.methodName,
+                   serverRPCPacket.rpcPacket.parametersOrder,
+                   serverRPCPacket.rpcPacket.parameters);
+       });
+        
+    }
+
+    void sendWorldStateToClients()
+    {
+        sendTransformsToClients();
+       
     }
 
     private void Update()
@@ -183,7 +215,7 @@ public class NetworkManagerServer : MonoBehaviour, INetEventListener
 
     Vector3 RandomPosition()
     {
-         return (new Vector3(Random.Range(Xmin, Xmax), 2.0f, Random.Range(Zmin, Zmax)));
+        return (new Vector3(Random.Range(Xmin, Xmax), 2.0f, Random.Range(Zmin, Zmax)));
         //return (new Vector3(0, 2.0f, 0));
     }
 
@@ -197,29 +229,33 @@ public class NetworkManagerServer : MonoBehaviour, INetEventListener
         _server.SendToAll(netData, DeliveryMethod.ReliableOrdered);
     }
 
+    void SendToAllClientsExcept(NetDataWriter netData, NetPeer netPeer)
+    {
+        _server.SendToAll(netData, DeliveryMethod.ReliableOrdered, netPeer);
+    }
 
     void SpawnPlayers()
     {
-       
+
         _serverPlayers.ForEach(player =>
         {
             NetDataWriter spawnPacket = new NetDataWriter();
 
-           // Debug.Log(player);
+            // Debug.Log(player);
             spawnPacket.Put((int)PacketType.Spawn);
             spawnPacket.Put(player._id);
 
-            Vector3 position  = player._maingameObject.transform.position;
+            Vector3 position = player._maingameObject.transform.position;
             Quaternion rotation = player._maingameObject.transform.rotation;
             Color color = player._maingameObject.transform.GetChild(1).GetComponent<Renderer>().material.color;
 
-            
+
             spawnPacket.Put(position.x);
             spawnPacket.Put(position.y);
             spawnPacket.Put(position.z);
 
             spawnPacket.Put(rotation.x);
-            spawnPacket.Put(rotation.y); 
+            spawnPacket.Put(rotation.y);
             spawnPacket.Put(rotation.z);
             spawnPacket.Put(rotation.w);
 
@@ -230,7 +266,7 @@ public class NetworkManagerServer : MonoBehaviour, INetEventListener
         });
     }
 
-    void   ServerPlayersListAdd(NetPeer peer)
+    void ServerPlayersListAdd(NetPeer peer)
     {
         ServerPlayer serverPlayer = _serverPlayers.Find(player => player._id == peer.Id);
         if (serverPlayer != null) { Debug.LogError("Should never happen :::::::: !"); return; }
@@ -278,6 +314,94 @@ public class NetworkManagerServer : MonoBehaviour, INetEventListener
         throw new System.NotImplementedException();
     }
 
+    void ServerExecuteRPC(NetPeer senderPeer, string methodName, RPCTarget rPCTarget, object[] parameters)
+    {
+        Debug.Log("I want to execute the RPC As Weell !!");
+    }
+
+    public void ProcessClientRPC(NetPeer senderPeer, RPCTarget rPCTarget, string methodName, string parametersOrder, object[] parameters)
+    {
+        NetDataWriter rpcData;
+
+        rpcData = new NetDataWriter();
+        rpcData.Put((int)PacketType.RPC);
+        rpcData.Put(methodName);
+        if (parameters == null)
+            { rpcData.Put((int)0); }
+        else
+        {
+            rpcData.Put(parameters.Length);
+            rpcData.Put(parametersOrder);
+            System.Array.ForEach<object>(parameters, parameter =>
+            {
+                System.Type type = parameter.GetType();
+                if (type.Equals(typeof(float)))
+                {
+                    rpcData.Put((float)parameter);
+                }
+                else if (type.Equals(typeof(double)))
+                {
+                    rpcData.Put((double)parameter);
+                }
+                else if (type.Equals(typeof(long)))
+                {
+                    rpcData.Put((long)parameter);
+                }
+                else if (type.Equals(typeof(ulong)))
+                {
+                    rpcData.Put((ulong)parameter);
+                }
+                else if (type.Equals(typeof(int)))
+                {
+                    rpcData.Put((int)parameter);
+                }
+                else if (type.Equals(typeof(uint)))
+                {
+                    rpcData.Put((uint)parameter);
+                }
+                else if (type.Equals(typeof(char)))
+                {
+                    rpcData.Put((char)parameter);
+                }
+                else if (type.Equals(typeof(ushort)))
+                {
+                    rpcData.Put((ushort)parameter);
+                }
+                else if (type.Equals(typeof(short)))
+                {
+                    rpcData.Put((short)parameter);
+                }
+                else if (type.Equals(typeof(sbyte)))
+                {
+                    rpcData.Put((sbyte)parameter);
+                }
+                else if (type.Equals(typeof(byte)))
+                {
+                    rpcData.Put((byte)parameter);
+                }
+                else if (type.Equals(typeof(bool)))
+                {
+                    rpcData.Put((bool)parameter);
+                }
+                else if (type.Equals(typeof(string)))
+                {
+                    rpcData.Put((string)parameter);
+                }
+            });
+        }
+        
+        //Excute The RPC on The Server
+        ServerExecuteRPC(senderPeer, methodName, rPCTarget, parameters);
+        if (rPCTarget == RPCTarget.ALL)
+        {
+            SendToAllClients(rpcData);
+        }
+        else
+        {
+            SendToAllClientsExcept(rpcData, netPeer: senderPeer);
+        }
+    }
+
     public void OnNetworkReceive(NetPeer peer, NetPacketReader reader, DeliveryMethod deliveryMethod)
     {
         PacketType type;
@@ -288,7 +412,7 @@ public class NetworkManagerServer : MonoBehaviour, INetEventListener
             case PacketType.Movement:
                 {
                     PendingInput pendingInput;
-                    int peerId = reader.GetInt();
+                    int senderPeerId = reader.GetInt();
                     pendingInput = new PendingInput();
 
                     pendingInput.sequenceNumber = reader.GetInt();
@@ -298,11 +422,83 @@ public class NetworkManagerServer : MonoBehaviour, INetEventListener
                     pendingInput.nInput.jump = reader.GetBool();
                     pendingInput.nInput.mouseX = reader.GetFloat();
                     pendingInput.nInput.mouseY = reader.GetFloat();
-                    UpdateClientInputPendingList(peerId, pendingInput);
+                    UpdateClientInputPendingList(senderPeerId, pendingInput);
+                }
+                break;
+            case PacketType.RPC:
+                {
+                    RPCPacket rpcPacket;
+
+                    rpcPacket = new RPCPacket();
+                    rpcPacket.senderPeerId = reader.GetInt();
+                    rpcPacket.rpcTarget = (RPCTarget)reader.GetInt();
+                    rpcPacket.methodName = reader.GetString();
+                    rpcPacket.parameterLength = reader.GetInt();
+                    if (peer.Id != rpcPacket.senderPeerId)
+                    { Debug.LogError("This should not happen"); }
+                    if (rpcPacket.parameterLength < 1) //surely void
+                    { ProcessClientRPC(peer, rpcPacket.rpcTarget, rpcPacket.methodName, null, null); }
+                    if (rpcPacket.parameterLength > 0)
+                    {
+                        rpcPacket.parametersOrder = reader.GetString();
+                        rpcPacket.parameters = new object[rpcPacket.parameterLength];
+                        int index = 0;
+                        System.Array.ForEach<char>(rpcPacket.parametersOrder.ToCharArray(), (typename) =>
+                        {
+                            switch (typename)
+                            {
+                                case RPCParametersTypes.FLOAT:
+                                    rpcPacket.parameters[index] = reader.GetFloat();
+                                    break;
+                                case RPCParametersTypes.DOUBLE:
+                                    rpcPacket.parameters[index] = reader.GetDouble();
+                                    break;
+                                case RPCParametersTypes.LONG:
+                                    rpcPacket.parameters[index] = reader.GetLong();
+                                    break;
+                                case RPCParametersTypes.ULONG:
+                                    rpcPacket.parameters[index] = reader.GetULong();
+                                    break;
+                                case RPCParametersTypes.INT:
+                                    rpcPacket.parameters[index] = reader.GetInt();
+                                    break;
+                                case RPCParametersTypes.UINT:
+                                    rpcPacket.parameters[index] = reader.GetUInt();
+                                    break;
+                                case RPCParametersTypes.CHAR:
+                                    rpcPacket.parameters[index] = reader.GetChar();
+                                    break;
+                                case  RPCParametersTypes.USHORT:
+                                    rpcPacket.parameters[index] = reader.GetChar();
+                                    break;
+                                case RPCParametersTypes.SHORT:
+                                    rpcPacket.parameters[index] = reader.GetShort();
+                                    break;
+                                case RPCParametersTypes.SBYTE:
+                                    rpcPacket.parameters[index] = reader.GetSByte();
+                                    break;
+                                case RPCParametersTypes.BYTE:
+                                    rpcPacket.parameters[index] = reader.GetByte();
+                                    break;
+                                case RPCParametersTypes.BOOL:
+                                    rpcPacket.parameters[index] = reader.GetBool();
+                                    break;
+                                case RPCParametersTypes.STRING:
+                                    rpcPacket.parameters[index] = reader.GetString();
+                                    break;
+                                default:break; 
+                            }
+                            index++;
+                        });
+                    }
+                    ServerRPCPacket serverRPC = new ServerRPCPacket();
+                    serverRPC.netPeer = peer;
+                    serverRPC.rpcPacket = rpcPacket;
+                    _rPCPackets.Add(serverRPC);
                 }
                 break;
             default:
-                Debug.Log($"Receive Unknown packet from the client : {peer.Id}");
+                Debug.LogWarning($"Receive Unknown packet from the client : {peer.Id}");
                 break;
         }
     }

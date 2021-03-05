@@ -1,8 +1,7 @@
-﻿using System.Collections;
-using System.Collections.Generic;
+﻿
 using UnityEngine;
 
-public class PlayerController : MonoBehaviour
+public class PlayerController : MonoBehaviourRPC
 {
     [SerializeField]
     private Transform groundChecker;
@@ -55,6 +54,7 @@ public class PlayerController : MonoBehaviour
 
          /*velocity.y += gravity * fpsTick;
          controller.Move(velocity * fpsTick);*/
+        
     }
 
     public void ApplyTransform(Vector3 position, Quaternion rotation)

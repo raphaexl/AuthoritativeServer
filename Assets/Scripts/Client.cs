@@ -3,8 +3,8 @@ using System.Collections.Generic;
 using UnityEngine;
 using LiteNetLib;
 using LiteNetLib.Utils;
-using System.Net;
-using System.Net.Sockets;
+using System;
+
 
 
 public class RemotePlayer
@@ -49,6 +49,8 @@ public struct ServerState
 
 public class Client : NetworkManagerClient
 {
+    public static Client Instance;
+
     const string CONNECTION_KEY = "KEYOFCONNCETION";
 
     [SerializeField]
@@ -90,8 +92,24 @@ public class Client : NetworkManagerClient
 
     Coroutine customUpdateCoroutine;
 
+    //List of the Player Views Here
+    public Dictionary<int,  PlayerViewClient> playerViewClients;
+    int _currentRPCExcecuter;
+
+    private void Awake()
+    {
+        if (Instance == null)
+        {
+            Instance = this;
+        }
+        else
+        {
+            Destroy(this.gameObject);
+        }
+    }
+
     // Start is called before the first frame update
-   new void Start()
+    new void Start()
     {
         Id = -1;
         base.Start();
@@ -105,6 +123,7 @@ public class Client : NetworkManagerClient
         _inputSeqNumber = 0;
         _pendingNInputs = new List<PendingInput>();
         _previousTime = Time.time;
+        playerViewClients = new Dictionary<int, PlayerViewClient>();
     }
 
     private void OnEnable()
@@ -240,13 +259,7 @@ public class Client : NetworkManagerClient
         _previousTime = currentTime;
         previousNInput = currentNInput;
     }
-    List<PlayerViewClient>Listofplayerviews;
 
-    foreach(PlayerViewClient P in Listofplayerviews)
-        {
-        if (idofrpc == P.id)
-        P.ReceiveRPC(params);
-}
     public override void OnNetworkReceive(NetPeer peer, NetPacketReader reader, DeliveryMethod deliveryMethod)
     {
         PacketType type;
@@ -334,6 +347,70 @@ public class Client : NetworkManagerClient
                     {
                         RemotePlayersMove(serverState);
                     }
+                }
+                break;
+            case PacketType.RPC:
+                {
+                    RPCPacket rPCPacket;
+
+                    rPCPacket.methodName = reader.GetString();
+                    rPCPacket.parameterLength = reader.GetInt();
+                    if (rPCPacket.parameterLength == 0)
+                    { ReceiveRPCFromServer(rPCPacket.methodName, new object[0]);}
+                    else {
+                        rPCPacket.parameters = new object[rPCPacket.parameterLength];
+                        rPCPacket.parametersOrder = reader.GetString();
+                        int index = 0;
+                        System.Array.ForEach<char>(rPCPacket.parametersOrder.ToCharArray(), (typename) =>
+                        {
+                            switch (typename)
+                            {
+                                case RPCParametersTypes.FLOAT:
+                                    rPCPacket.parameters[index] = reader.GetFloat();
+                                    break;
+                                case RPCParametersTypes.DOUBLE:
+                                    rPCPacket.parameters[index] = reader.GetDouble();
+                                    break;
+                                case RPCParametersTypes.LONG:
+                                    rPCPacket.parameters[index] = reader.GetLong();
+                                    break;
+                                case RPCParametersTypes.ULONG:
+                                    rPCPacket.parameters[index] = reader.GetULong();
+                                    break;
+                                case RPCParametersTypes.INT:
+                                    rPCPacket.parameters[index] = reader.GetInt();
+                                    break;
+                                case RPCParametersTypes.UINT:
+                                    rPCPacket.parameters[index] = reader.GetUInt();
+                                    break;
+                                case RPCParametersTypes.CHAR:
+                                    rPCPacket.parameters[index] = reader.GetChar();
+                                    break;
+                                case RPCParametersTypes.USHORT:
+                                    rPCPacket.parameters[index] = reader.GetChar();
+                                    break;
+                                case RPCParametersTypes.SHORT:
+                                    rPCPacket.parameters[index] = reader.GetShort();
+                                    break;
+                                case RPCParametersTypes.SBYTE:
+                                    rPCPacket.parameters[index] = reader.GetSByte();
+                                    break;
+                                case RPCParametersTypes.BYTE:
+                                    rPCPacket.parameters[index] = reader.GetByte();
+                                    break;
+                                case RPCParametersTypes.BOOL:
+                                    rPCPacket.parameters[index] = reader.GetBool();
+                                    break;
+                                case RPCParametersTypes.STRING:
+                                    rPCPacket.parameters[index] = reader.GetString();
+                                    break;
+                                default: break;
+                            }
+                            index++;
+                        });
+                        ReceiveRPCFromServer(rPCPacket.methodName, rPCPacket.parameters);
+                    }
+                    
                 }
                 break;
             default:
@@ -438,16 +515,180 @@ public class Client : NetworkManagerClient
         Destroy(toDelete.go);
         _remotePlayers.Remove(toDelete);
     }
-
     
-
-    void ReceiveInputFromServer()
+    string RPCParametersOrder(params object[] parameters)
     {
-        //Debug.LogFormat(" id : {0} ", dataReader.GetInt());
-        //Debug.LogFormat(" Analog 1 : {0} ", dataReader.GetFloat());
-        //Debug.LogFormat(" Analog 2 : {0} ", dataReader.GetFloat());
-        //dataReader.Recycle();
+        System.Text.StringBuilder paramsOrder = new System.Text.StringBuilder();
+
+        for (int i = 0; i < parameters.Length; i++)
+        {
+            Type type = parameters[i].GetType();
+
+            if (type.Equals(typeof(float)))
+            {
+                paramsOrder.Append(RPCParametersTypes.FLOAT);
+            }
+            else if (type.Equals(typeof(double)))
+            {
+                paramsOrder.Append(RPCParametersTypes.DOUBLE);
+            }
+            else if (type.Equals(typeof(long)))
+            {
+                paramsOrder.Append(RPCParametersTypes.LONG);
+            }
+            else if (type.Equals(typeof(ulong)))
+            {
+                paramsOrder.Append(RPCParametersTypes.ULONG);
+            }
+            else if (type.Equals(typeof(int)))
+            {
+                paramsOrder.Append(RPCParametersTypes.INT);
+            }
+            else if (type.Equals(typeof(uint)))
+            {
+                paramsOrder.Append(RPCParametersTypes.UINT);
+            }
+            else if (type.Equals(typeof(char)))
+            {
+                paramsOrder.Append(RPCParametersTypes.CHAR);
+            }
+            else if (type.Equals(typeof(ushort)))
+            {
+                paramsOrder.Append(RPCParametersTypes.USHORT);
+            }
+            else if (type.Equals(typeof(short)))
+            {
+                paramsOrder.Append(RPCParametersTypes.SHORT);
+            }
+            else if (type.Equals(typeof(sbyte)))
+            {
+                paramsOrder.Append(RPCParametersTypes.BYTE);
+            }
+            else if (type.Equals(typeof(byte)))
+            {
+                paramsOrder.Append(RPCParametersTypes.BYTE);
+            }
+            else if (type.Equals(typeof(bool)))
+            {
+                paramsOrder.Append(RPCParametersTypes.BOOL);
+            }
+            else if (type.Equals(typeof(string)))
+            {
+                paramsOrder.Append(RPCParametersTypes.STRING);
+            }
+            else if (type.Equals(typeof(string)))
+            {
+                paramsOrder.Append(RPCParametersTypes.STRING);
+            }
+            else
+            {
+                Debug.LogError("An RPC with unsupported parameters type");
+            }
+        }
+        return paramsOrder.ToString();
+
     }
 
-  
+    public void AddPlayerView(PlayerViewClient playerViewClient)
+    {
+        playerViewClients.Add(playerViewClient.Id, playerViewClient);
+    }
+
+    public void RequestRPC(int id, string methodName, RPCTarget rpcTarget, params object[] parameters)
+    {
+       if (playerViewClients.ContainsKey(id))
+        {
+            _currentRPCExcecuter = id;
+            SendRPCToServer(methodName, rpcTarget, parameters);
+        }
+    }
+
+    private void SendRPCToServer(string methodName, RPCTarget rpcTarget, params object[] parameters)
+    {
+        NetDataWriter rpcData = new NetDataWriter();
+        rpcData.Put((int)PacketType.RPC);
+        rpcData.Put(netPeer.Id);
+        rpcData.Put((int)rpcTarget);
+        //send method name
+        rpcData.Put(methodName);
+        //Send The parameters length
+        if (parameters == null)
+        { rpcData.Put((int)0); }
+        else
+        {
+            rpcData.Put((int)parameters.Length);
+            //Send The parameters order
+            rpcData.Put(RPCParametersOrder(parameters));
+            for (int i = 0; i < parameters.Length; i++)
+            {
+                Type type = parameters[i].GetType();
+                if (type.Equals(typeof(float)))
+                {
+                    rpcData.Put((float)parameters[i]);
+                }
+                else if (type.Equals(typeof(double)))
+                {
+                    rpcData.Put((double)parameters[i]);
+                }
+                else if (type.Equals(typeof(long)))
+                {
+                    rpcData.Put((long)parameters[i]);
+                }
+                else if (type.Equals(typeof(ulong)))
+                {
+                    rpcData.Put((ulong)parameters[i]);
+                }
+                else if (type.Equals(typeof(int)))
+                {
+                    rpcData.Put((int)parameters[i]);
+                }
+                else if (type.Equals(typeof(uint)))
+                {
+                    rpcData.Put((uint)parameters[i]);
+                }
+                else if (type.Equals(typeof(char)))
+                {
+                    rpcData.Put((char)parameters[i]);
+                }
+                else if (type.Equals(typeof(ushort)))
+                {
+                    rpcData.Put((ushort)parameters[i]);
+                }
+                else if (type.Equals(typeof(short)))
+                {
+                    rpcData.Put((short)parameters[i]);
+                }
+                else if (type.Equals(typeof(sbyte)))
+                {
+                    rpcData.Put((sbyte)parameters[i]);
+                }
+                else if (type.Equals(typeof(byte)))
+                {
+                    rpcData.Put((byte)parameters[i]);
+                }
+                else if (type.Equals(typeof(bool)))
+                {
+                    rpcData.Put((bool)parameters[i]);
+                }
+                else if (type.Equals(typeof(string)))
+                {
+                    rpcData.Put((string)parameters[i]);
+                }
+                // rpcData.Put(param[i]);
+            }
+        }
+       netPeer.Send(rpcData, DeliveryMethod.ReliableOrdered);
+    }
+
+    void ReceiveRPCFromServer( string methodName, params object[] parameters)
+    {
+        Debug.Log("I received RPC from the server");
+        foreach (KeyValuePair<int, PlayerViewClient> playerView in playerViewClients)
+       {
+           if (_currentRPCExcecuter == playerView.Value.Id)
+            {
+                playerView.Value.ReceiveRPC(methodName, parameters);
+            }
+        }
+    }
 }
