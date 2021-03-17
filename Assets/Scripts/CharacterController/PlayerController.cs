@@ -19,14 +19,14 @@ public class PlayerController : MonoBehaviourRPC
     Vector3 velocity;
     float mouseSensitivity = 100f;
     private float xRotation;
-    private Transform cameraTrans;
+    private float yRotation;
 
     // Start is called before the first frame update
     void Start()
     {
         xRotation = 0;
+        yRotation = 0;
         controller = GetComponent<CharacterController>();
-        cameraTrans = transform.GetChild(0).transform;
     }
 
     public void ApplyInput(Tools.NInput nIpunt, float fpsTick)
@@ -38,23 +38,28 @@ public class PlayerController : MonoBehaviourRPC
         if (isGrounded && velocity.y < 0f)
         { velocity.y = -1f;}
 
-        if (nIpunt.jump)
+        if (nIpunt.Jump)
         { velocity.y = Mathf.Sqrt(-2 * gravity * jumpHeight);}
 
-        Vector3 move = transform.right * nIpunt.inputX + transform.forward * nIpunt.inputY;
+        Vector3 move = transform.right * nIpunt.InputX + transform.forward * nIpunt.InputY;
+        //transform.Translate(move * speed * fpsTick);
         controller.Move(move * speed * fpsTick);
 
-        nIpunt.mouseX *= mouseSensitivity * fpsTick;
-        nIpunt.mouseY *= mouseSensitivity * fpsTick;
+        nIpunt.MouseX *= mouseSensitivity * fpsTick;
+        nIpunt.MouseY *= mouseSensitivity * fpsTick;
        
-        xRotation -= nIpunt.mouseY;
-        xRotation = Mathf.Clamp(xRotation, -90f, 90f);
-        // transform.Rotate(Vector3.up * nIpunt.mouseX);
-        //cameraTrans.localRotation = Quaternion.Euler(xRotation, 0, 0);
+        xRotation -= nIpunt.MouseY;
+        xRotation = Mathf.Clamp(xRotation, -40f, 80f);
+        yRotation += nIpunt.MouseX;
+    //    yRotation = Mathf.Clamp(yRotation, -180f, 180f);
 
-         /*velocity.y += gravity * fpsTick;
-         controller.Move(velocity * fpsTick);*/
-        
+        transform.localRotation = Quaternion.Euler(xRotation, yRotation, 0);
+        //  transform.Rotate(Vector3.up * nIpunt.MouseX);
+        //   cameraTrans.localRotation = Quaternion.Euler(xRotation, 0, 0);
+        velocity.y += gravity * fpsTick;
+        controller.Move(velocity * fpsTick);
+        //transform.Translate(move * speed * fpsTick);
+
     }
 
     public void ApplyTransform(Vector3 position, Quaternion rotation)
@@ -62,7 +67,7 @@ public class PlayerController : MonoBehaviourRPC
         //Debug.Log($"Current Position : ({transform.position.x}, {transform.position.y}, {transform.position.z}) Rotation : ({transform.rotation.x}, {transform.rotation.y}, {transform.rotation.z})");
         //Debug.Log($"Authorative Position : ({position.x}, {position.y}, {position.z}) Rotation : ({rotation.x}, {rotation.y}, {rotation.z})");
         transform.position = position;
-        transform.rotation = rotation;
+        transform.localRotation = rotation;
     }
 
     public void ApplyCameraRotation(float mouseX, float mouseY)
@@ -74,6 +79,5 @@ public class PlayerController : MonoBehaviourRPC
     private void Update()
     {
         Debug.DrawRay(transform.position, transform.forward * 20f);
-
     }
 }

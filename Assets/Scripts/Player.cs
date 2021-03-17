@@ -27,7 +27,6 @@ public class Player : MonoBehaviour
         set { _isLocalPlayer = value; }
     }
 
-    public int Id;
     public string playerType;
 
     private void Update()

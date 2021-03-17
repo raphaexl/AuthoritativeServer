@@ -4,6 +4,27 @@ using UnityEngine;
 
 public class RPCTest : MonoBehaviour
 {
+    /*class RPCAttribute : Attribute { };
+    class RPCMethodAttribute : Attribute { }*/
+
+    class PlayerShoot
+    {
+        public void ShootMySelf()
+        {
+            System.Console.WriteLine("The Player Shooting him self");
+        }
+
+        [RPC]
+        public void ShootWithKalash()
+        {
+            System.Console.WriteLine(" Player Shoot with Kalash");
+        }
+        [RPC]
+        public void ShootWithGun()
+        {
+            System.Console.WriteLine(" Player Shoot with Gun");
+        }
+    }
 
     [RPC]
     public void openDoor()
@@ -27,21 +48,5 @@ public class RPCTest : MonoBehaviour
     public void notAnRpc()
     {
         Debug.Log("I'm niot an RPC");
-    }
-
-
-    PlayerViewClient PlayerViewClient;
-
-    private void Awake()
-    {
-        PlayerViewClient = GetComponent<PlayerViewClient>();
-    }
-
-    private void Update()
-    {
-        if (Input.GetKeyDown(KeyCode.Space))
-        {
-            PlayerViewClient.RPC("openDoor", RPCTarget.ALL, null);
-        }
     }
 }

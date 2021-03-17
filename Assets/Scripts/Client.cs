@@ -5,26 +5,6 @@ using LiteNetLib;
 using LiteNetLib.Utils;
 using System;
 
-
-
-public class RemotePlayer
-{
-    public int Id;
-    public GameObject go;
-    public Vector3 []position_buff;
-
-    public RemotePlayer(int id, GameObject _go)
-    {
-        Id = id;
-        go = _go;
-        go.GetComponent<Player>().ID = id;
-        go.GetComponent<Player>().Id = id;
-        //Disable the camera of the enemy
-        go.transform.GetChild(0).gameObject.GetComponent<Camera>().gameObject.SetActive(false);
-        go.GetComponent<Player>().IsLocalPlayer = false;
-    }
-}
-
 public struct PendingInput
 {
     public Tools.NInput nInput;
@@ -50,19 +30,16 @@ public struct ServerState
 public class Client : NetworkManagerClient
 {
     public static Client Instance;
-
     const string CONNECTION_KEY = "KEYOFCONNCETION";
-
     [SerializeField]
-    GameObject playerPrefab;
+    GameObject playerGO= default;
 
-    List<RemotePlayer> _remotePlayers;
-    GameObject _localPlayer;
+    List<PlayerViewClient> _remotePlayers;
+    PlayerViewClient _localPlayer;
 
     private int Id;
     private Tools.NInput currentNInput;
     private Tools.NInput previousNInput;
-
     //List of Pending Input
     List<PendingInput> _pendingNInputs;
     float _previousTime;
@@ -71,11 +48,11 @@ public class Client : NetworkManagerClient
     [SerializeField]
     float Lag;
     [SerializeField]
-    bool clientSidePrediction;
+    bool clientSidePrediction = default;
     [SerializeField]
-    bool serverReconciliation;
+    bool serverReconciliation = default;
     [SerializeField]
-    bool interpolation;
+    public bool interpolation = default;
 
     int _inputSeqNumber;
 
@@ -85,8 +62,6 @@ public class Client : NetworkManagerClient
     const int CLIENT_SLEEP_TIME = 15;
     const float GAME_FPS = 50f;
 
-    
-
     bool istantiated = false;
     bool isConnected = false;
 
@@ -94,7 +69,24 @@ public class Client : NetworkManagerClient
 
     //List of the Player Views Here
     public Dictionary<int,  PlayerViewClient> playerViewClients;
-    int _currentRPCExcecuter;
+    List<ServerState> _serverStates;
+
+    //Lag compensation
+    StateBuffer latestState;
+    StateBuffer stateAtLastPacket;
+    float currentTime = 0f;
+    double currentPacketTime = 0f;
+    double lastPacketTime;
+
+    //Values that will be synced over network
+    Vector3 latestPos;
+    Quaternion latestRot;
+    //Lag compensation
+   // float currentTime = 0;
+    //double currentPacketTime = 0;
+  //  double lastPacketTime = 0;
+    Vector3 positionAtLastPacket = Vector3.zero;
+    Quaternion rotationAtLastPacket = Quaternion.identity;
 
     private void Awake()
     {
@@ -115,7 +107,7 @@ public class Client : NetworkManagerClient
         base.Start();
         StartClient();
         _localPlayer = null;
-        _remotePlayers = new List<RemotePlayer>();
+        _remotePlayers = new List<PlayerViewClient>();
         isConnected = false;
         clientSidePrediction = false;
         serverReconciliation = false;
@@ -124,12 +116,16 @@ public class Client : NetworkManagerClient
         _pendingNInputs = new List<PendingInput>();
         _previousTime = Time.time;
         playerViewClients = new Dictionary<int, PlayerViewClient>();
+        _serverStates = new List<ServerState>();
+       //Should be OnEnable
+       customUpdateCoroutine = StartCoroutine(CustomUpdate(GAME_FPS));
     }
 
+    /*
     private void OnEnable()
     {
         customUpdateCoroutine = StartCoroutine(CustomUpdate(GAME_FPS));
-    }
+    }*/
 
     public void ConnectToServer()
     {
@@ -138,6 +134,7 @@ public class Client : NetworkManagerClient
         base.Connect(CONNECTION_KEY);
     }
 
+
     IEnumerator CustomUpdate(float fpsRate)
     {
         WaitForSeconds wait = new WaitForSeconds(1.0f / fpsRate);
@@ -145,10 +142,29 @@ public class Client : NetworkManagerClient
         while (true)
         {
             processInputs();
+            processServerState();
             yield return wait;
         }
     }
 
+    void processServerState()
+    {
+        _serverStates.ForEach(serverState =>
+        {
+            if (serverState.peerId == Id) //Server Reconciliation
+            {
+                ServerAuthoritativeState(serverState);
+                ServerReconciliation(serverState);
+            }
+            else
+            {
+                RemotePlayersMove(serverState);
+            }
+        });
+        _serverStates.Clear();
+    }
+
+    #region LiteNetLib overloads
     private void OnDisable()
     {
         StopCoroutine(customUpdateCoroutine);
@@ -171,96 +187,118 @@ public class Client : NetworkManagerClient
         ClientUIController.Instance.OnEnableToogle();
         Debug.Log(" You are connected is it to the Server ?? "+ peer.Id);
     }
+    #endregion
 
+    #region Spawning and Instantiation of players
+    void SpawnPlayer(SpawnPacket spawnPacket)
+    {
+        //yield return new WaitForSeconds(1f);
+        PlayersInstanciation(spawnPacket.PlayerId, spawnPacket.Position, spawnPacket.Rotation, spawnPacket.Albedo, spawnPacket.PlayerId == Id);
+    }
 
     public void PlayersInstanciation(int id, Vector3 position, Quaternion rotation, Color color, bool isLocalPlayer)
-        {
+    {
+
         if (isLocalPlayer)
         {
-            if (_localPlayer) { return; }
+
+            if (_localPlayer)
+            {
+                return; }
         }
-        RemotePlayer foundPlayer = _remotePlayers.Find(player => player.Id == id);
+       PlayerViewClient foundPlayer = _remotePlayers.Find(player => player.Id == id);
+
         if (foundPlayer == null)
         {
-            GameObject go = Instantiate(playerPrefab, position, rotation);
-            go.transform.GetChild(1).GetComponent<MeshRenderer>().material.color = color;
             if (isLocalPlayer)
             {
-
                 if (istantiated)
                 {
                     if (_localPlayer == null) { Debug.Log("Yopu found me"); }
                 }
-                Debug.LogFormat("Instantiation of Self {0} instanciated : {1}", _localPlayer != null, istantiated);
-                if (_localPlayer != null) { Debug.Log("Not normal");
-
-                }
+                if (_localPlayer != null) { Debug.Log("Not normal");}
                 else
+                {istantiated = true;}
+                // _localPlayer = new ClientPlayer(id, true); Not working I think it makes no sence to call a constructor to initilize a prefab in another class !!!
+                GameObject go = Instantiate(playerGO);
+                if (!go.GetComponent<PlayerViewClient>())
                 {
-                    istantiated = true;
+                    _localPlayer = go.AddComponent<PlayerViewClient>();
                 }
-                _localPlayer = go;
-                _localPlayer.GetComponent<Player>().ID = id;
-                _localPlayer.GetComponent<Player>().Id = id;
-                _localPlayer.GetComponent<Player>().IsLocalPlayer = true;
+                _localPlayer.Spawn(isLocalPlayer, id, position, rotation, color);
+                //Then run something to construct the go on the client player
+                if (_localPlayer != null) { Debug.Log("Local Player is Created"); }
+                else { Debug.Log("The Local could not be created"); }
             }
             else
             {
-                _remotePlayers.Add(new RemotePlayer(id, go));
-                Debug.LogFormat("Instantiation of an enemy Position : ({0}, {0}, {0}) ", go.transform.position.x, go.transform.position.y, go.transform.position.z);
+                GameObject go = Instantiate(playerGO);
+                PlayerViewClient remotePlayer = go.AddComponent<PlayerViewClient>();
+                remotePlayer.Spawn(isLocalPlayer, id, position, rotation, color);
+                _remotePlayers.Add(remotePlayer);
             }
-
         }
+        
     }
-
-    void MoveLocalplayer(Tools.NInput nInput, float fpsRate)
-    {
-        if (!_localPlayer) { return; }
-        _localPlayer.GetComponent<PlayerController>().ApplyInput(nInput, fpsRate);
-    }
-
+    #endregion
+    #region Inputs Of The Clients
     //Note the input is not smooth....
+    // bool UpdateInput() => currentNInput != previousNInput;
+
     bool UpdateInput()
     {
-        float deltaInputX = Mathf.Abs(currentNInput.inputX - previousNInput.inputX);
-        float deltaInputY = Mathf.Abs(currentNInput.inputY - previousNInput.inputY);
-        float deltaMouseX = 0; //Mathf.Abs(currentNInput.mouseX - previousNInput.mouseX);
-        float deltaMouseY = 0;// Mathf.Abs(currentNInput.mouseY - previousNInput.mouseY);
-        float epsilon = 1e-3f;
+        float deltaInputX = Mathf.Abs(currentNInput.InputX - previousNInput.InputX);
+        float deltaInputY = Mathf.Abs(currentNInput.InputY - previousNInput.InputY);
+        float deltaMouseX = Mathf.Abs(currentNInput.MouseX - previousNInput.MouseX);
+        float deltaMouseY = Mathf.Abs(currentNInput.MouseY - previousNInput.MouseY);
+        float epsilon = 0f;// 1e-3f;
 
         return (
-            currentNInput.jump || deltaInputX > epsilon || deltaInputY > epsilon
-            || deltaMouseX > epsilon || deltaMouseY > epsilon || Mathf.Abs(currentNInput.inputX) > epsilon
-            || Mathf.Abs(currentNInput.inputY) > epsilon
+            currentNInput.Jump || deltaInputX > epsilon || deltaInputY > epsilon
+            || deltaMouseX > epsilon || deltaMouseY > epsilon || Mathf.Abs(currentNInput.InputX) > epsilon
+            || Mathf.Abs(currentNInput.InputY) > epsilon
             );
     }
+    public void setPlayerInputs(Tools.NInput nInput)
+    {
+        currentNInput = nInput;
+    }
 
-   
+    bool _needUpdate = false;
+
     void processInputs()
     {
       //  float currentTime = Time.realtimeSinceStartup; //time;
         float currentTime = Time.time;
         float dt_sec = currentTime - _previousTime;
 
-        if (!UpdateInput()) { return; } //Nothing to process
+        //!!!!!!!_pendingNInputs.Count == 0
+        _needUpdate = UpdateInput();
+        if (! _needUpdate && _pendingNInputs.Count == 0) { return; } //Nothing to process
+
+        if (!_needUpdate && _pendingNInputs.Count > 0)
+        {
+            Debug.Log("Check This Case Please ");
+            return;
+        }
         PendingInput pendingInput;
 
         pendingInput = new PendingInput(currentNInput, dt_sec, _inputSeqNumber++);
         //Send the input to the server here
         SendInputToServer(pendingInput);
+        //If there is client side prediction enabled do it
+        if (clientSidePrediction)
         {
-            //If there is client side prediction enabled do it
-            if (clientSidePrediction)
-            {
-                MoveLocalplayer(currentNInput, dt_sec); //may be Time.deltaTime should do as well ???
-            }
+            MoveLocalplayer(currentNInput, dt_sec); //may be Time.deltaTime should do as well ???
         }
         _pendingNInputs.Add(pendingInput);
         _previousTime = currentTime;
         previousNInput = currentNInput;
     }
+    #endregion
+    #region Packets from The Server
 
-    public override void OnNetworkReceive(NetPeer peer, NetPacketReader reader, DeliveryMethod deliveryMethod)
+public override void OnNetworkReceive(NetPeer peer, NetPacketReader reader, DeliveryMethod deliveryMethod)
     {
         PacketType type;
 
@@ -289,27 +327,9 @@ public class Client : NetworkManagerClient
                 break;
             case PacketType.Spawn:
                 {
-                    int peerId = reader.GetInt();
-                    {
-                        Vector3 position;
-                        Quaternion rotation;
-                        Color color =  new Color();
-
-                        Debug.Log($"Spawn : {peerId}");
-
-                        position.x = reader.GetFloat();
-                        position.y = reader.GetFloat();
-                        position.z = reader.GetFloat();
-                        rotation.x = reader.GetFloat();
-                        rotation.y = reader.GetFloat();
-                        rotation.z = reader.GetFloat();
-                        rotation.w = reader.GetFloat();
-
-                        color.r = reader.GetFloat();
-                        color.g = reader.GetFloat();
-                        color.b = reader.GetFloat();
-                        PlayersInstanciation(peerId, position, rotation, color, Id == peerId);
-                    }
+                    SpawnPacket spawnPacket =  new SpawnPacket();
+                    spawnPacket.Deserialize(reader);
+                    SpawnPlayer(spawnPacket);
                 }
                 break;
             case PacketType.Leave:
@@ -338,79 +358,21 @@ public class Client : NetworkManagerClient
                     serverState.rotation.y = reader.GetFloat();
                     serverState.rotation.z = reader.GetFloat();
                     serverState.rotation.w = reader.GetFloat();
-                    if (serverState.peerId == Id) //Server Reconciliation
-                    {
-                        ServerAuthoritativeState(serverState);
-                        ServerReconciliation(serverState);
-                    }
-                    else
-                    {
-                        RemotePlayersMove(serverState);
-                    }
+                    OnServerStatePacketReceive(serverState);
                 }
                 break;
             case PacketType.RPC:
                 {
                     RPCPacket rPCPacket;
-
-                    rPCPacket.methodName = reader.GetString();
-                    rPCPacket.parameterLength = reader.GetInt();
+                    rPCPacket = new RPCPacket();
+                    rPCPacket.Deserialize(reader);
                     if (rPCPacket.parameterLength == 0)
-                    { ReceiveRPCFromServer(rPCPacket.methodName, new object[0]);}
-                    else {
-                        rPCPacket.parameters = new object[rPCPacket.parameterLength];
-                        rPCPacket.parametersOrder = reader.GetString();
-                        int index = 0;
-                        System.Array.ForEach<char>(rPCPacket.parametersOrder.ToCharArray(), (typename) =>
-                        {
-                            switch (typename)
-                            {
-                                case RPCParametersTypes.FLOAT:
-                                    rPCPacket.parameters[index] = reader.GetFloat();
-                                    break;
-                                case RPCParametersTypes.DOUBLE:
-                                    rPCPacket.parameters[index] = reader.GetDouble();
-                                    break;
-                                case RPCParametersTypes.LONG:
-                                    rPCPacket.parameters[index] = reader.GetLong();
-                                    break;
-                                case RPCParametersTypes.ULONG:
-                                    rPCPacket.parameters[index] = reader.GetULong();
-                                    break;
-                                case RPCParametersTypes.INT:
-                                    rPCPacket.parameters[index] = reader.GetInt();
-                                    break;
-                                case RPCParametersTypes.UINT:
-                                    rPCPacket.parameters[index] = reader.GetUInt();
-                                    break;
-                                case RPCParametersTypes.CHAR:
-                                    rPCPacket.parameters[index] = reader.GetChar();
-                                    break;
-                                case RPCParametersTypes.USHORT:
-                                    rPCPacket.parameters[index] = reader.GetChar();
-                                    break;
-                                case RPCParametersTypes.SHORT:
-                                    rPCPacket.parameters[index] = reader.GetShort();
-                                    break;
-                                case RPCParametersTypes.SBYTE:
-                                    rPCPacket.parameters[index] = reader.GetSByte();
-                                    break;
-                                case RPCParametersTypes.BYTE:
-                                    rPCPacket.parameters[index] = reader.GetByte();
-                                    break;
-                                case RPCParametersTypes.BOOL:
-                                    rPCPacket.parameters[index] = reader.GetBool();
-                                    break;
-                                case RPCParametersTypes.STRING:
-                                    rPCPacket.parameters[index] = reader.GetString();
-                                    break;
-                                default: break;
-                            }
-                            index++;
-                        });
-                        ReceiveRPCFromServer(rPCPacket.methodName, rPCPacket.parameters);
+                    {
+                        ReceiveRPCFromServer(rPCPacket.methodName, rPCPacket.senderPeerId, new object[0]);
                     }
-                    
+                    else {
+                        ReceiveRPCFromServer(rPCPacket.methodName, rPCPacket.senderPeerId, rPCPacket.parameters);
+                    }
                 }
                 break;
             default:
@@ -420,7 +382,8 @@ public class Client : NetworkManagerClient
         }
         reader.Recycle();
     }
-
+    #endregion
+    #region Client Side Prediction and Server Reconciliation
     void ServerAuthoritativeState(ServerState serverState)
     {
         //Set server Authoritative Position and rotation
@@ -428,12 +391,12 @@ public class Client : NetworkManagerClient
           transform.rotation = serverState.rotation;*/
         /* _localPlayer.transform.position = serverState.position;
          _localPlayer.transform.rotation = serverState.rotation;*/
-       // Debug.Log($"Authoritative State --> Position : (x : {serverState.position.x} y : {serverState.position.y} z : {serverState.position.z})");
-       _localPlayer.GetComponent<PlayerController>().ApplyTransform(serverState.position, serverState.rotation);
+        if (_localPlayer) { _localPlayer.SetTransform(serverState.position, serverState.rotation); }
     }
 
     void ServerReconciliation(ServerState serverState)
     {
+
         if (serverReconciliation)
         {
             List<PendingInput> toRemove = new List<PendingInput>();
@@ -446,7 +409,7 @@ public class Client : NetworkManagerClient
                 }
                 else
                 {
-                    Debug.Log($"NOT PROCESSED BY THE SERVER {pendingInput.sequenceNumber} last processed by the server : ({serverState.lastProcessedInput})");
+                    //Debug.Log($"NOT PROCESSED BY THE SERVER {pendingInput.sequenceNumber} last processed by the server : ({serverState.lastProcessedInput})");
                     //Apply the input
                     MoveLocalplayer(pendingInput.nInput, pendingInput.nTime);
                 }
@@ -462,47 +425,89 @@ public class Client : NetworkManagerClient
             //Drop all recorded inputs
             _pendingNInputs.Clear();
         }
-   
+    }
+    #endregion
+
+    void OnServerStatePacketReceive(ServerState serverState)
+    {
+        if (serverState.peerId != Id)
+        {
+            if (_remotePlayers.Count < 1) { return; }
+            PlayerViewClient foundPlayer = _remotePlayers.Find(player => player.Id == serverState.peerId);
+            if (foundPlayer == null) { Debug.Log($"Should never happen ! Remote Players Number : {_remotePlayers.Count}"); return; }
+            {
+                //foundPlayer.SetTransform(serverState.position, serverState.rotation);
+                //Add the state to the positions buffer
+                float timestamp = Time.time;
+                StateBuffer stateBuffer = new StateBuffer();
+                stateBuffer.Position = serverState.position;
+                stateBuffer.Rotation = serverState.rotation;
+                stateBuffer.Timestamp = timestamp;
+
+                latestPos = serverState.position;
+                latestRot = serverState.rotation;
+
+                currentTime = 0f;
+                lastPacketTime = currentPacketTime;
+                currentPacketTime = Time.time;//Noramlly info.SentServerTime (meaning time when it was sent to the server or client ?)
+                stateAtLastPacket = new StateBuffer();
+                stateAtLastPacket.Position = foundPlayer.GetComponent<PlayerController>().transform.position;
+                stateAtLastPacket.Rotation = foundPlayer.GetComponent<PlayerController>().transform.rotation;
+
+                positionAtLastPacket = stateAtLastPacket.Position;
+                rotationAtLastPacket = stateAtLastPacket.Rotation;
+
+               /* positionAtLastPacket = transform.position;
+                rotationAtLastPacket = transform.rotation;*/
+                //foundPlayer.position_buff.add({ timestamp,  position, rotation })
+            }
+        }
+        _serverStates.Add(serverState);
+    }
+
+    void MoveLocalplayer(Tools.NInput nInput, float fpsRate)
+    {
+        if (!_localPlayer) { return; }
+        _localPlayer.HandleInput(nInput, fpsRate);
     }
 
     void RemotePlayersMove(ServerState serverState)
     {
-        RemotePlayer foundPlayer = _remotePlayers.Find(player => player.Id == serverState.peerId);
-        if (foundPlayer == null) { Debug.Log("Should never happen !"); return; }
-        if (!interpolation)
+        PlayerViewClient foundPlayer = _remotePlayers.Find(player => player.Id == serverState.peerId);
+        if (!foundPlayer)
         {
-            foundPlayer.go.transform.position = serverState.position;
-            foundPlayer.go.transform.rotation = serverState.rotation;
+            return;
+        }
+      if (!interpolation)
+        {
+           foundPlayer.SetTransform(serverState.position, serverState.rotation);
+            Debug.Log("Lag Compensation is off");
         }
         else
         {
-            //Add the state to the positions buffer
-            float timestamp = Time.time;
-            //foundPlayer.position_buff.add({ timestamp,  position, rotation })
+            Debug.Log("Lag Compensation is on");
+           EntityInterpolation(foundPlayer);
         }
-       
     }
 
-    void EntitiesInterpolation()
+    void EntityInterpolation(PlayerViewClient remotePlayer)
     {
-        //Interpolation for remote clients
+        double timeToReachGoal = currentPacketTime - lastPacketTime;
+        currentTime += Time.deltaTime;
+        remotePlayer.GetComponent<PlayerController>().transform.position = Vector3.Lerp(positionAtLastPacket, latestPos, (float)(currentTime / timeToReachGoal));
+        remotePlayer.GetComponent<PlayerController>().transform.rotation = Quaternion.Lerp(rotationAtLastPacket, latestRot, (float)(currentTime / timeToReachGoal));
     }
-
     void SelfRemove()
     {
         Destroy(_localPlayer);
        // Destroy(this.gameObject);
     }
     //Won't allow update from inherited
-     new private void Update()
+    new private void Update()
     {
         base.Update();
         if (!isConnected){ return; }
-        currentNInput.inputX = Input.GetAxis("Horizontal");
-        currentNInput.inputY = Input.GetAxis("Vertical");
-        currentNInput.jump = Input.GetButtonDown("Jump");
-        currentNInput.mouseX = Input.GetAxis("Mouse X");
-        currentNInput.mouseY = Input.GetAxis("Mouse Y");
+       
         //Never do this but :-)
         clientSidePrediction = ClientUIController.Instance.clientSidePrediction;
         serverReconciliation = ClientUIController.Instance.serverReconcilation;
@@ -511,11 +516,21 @@ public class Client : NetworkManagerClient
 
     void OthersRemove(int id)
     {
-        RemotePlayer toDelete = _remotePlayers.Find(player => player.Id == id);
-        Destroy(toDelete.go);
+        PlayerViewClient toDelete = _remotePlayers.Find(player => player.Id == id);
+        if (toDelete != null)
+        {
+            Debug.Log("Removed");
+        }
+        else
+        {
+            Debug.Log("Not removed");
+        }
         _remotePlayers.Remove(toDelete);
+        Destroy(toDelete);
+        toDelete = null;
+        playerViewClients.Remove(id);
     }
-    
+    #region RPC Helper
     string RPCParametersOrder(params object[] parameters)
     {
         System.Text.StringBuilder paramsOrder = new System.Text.StringBuilder();
@@ -588,6 +603,27 @@ public class Client : NetworkManagerClient
         return paramsOrder.ToString();
 
     }
+    #endregion
+
+    #region Other things
+    //protected void SendInputToServer(InputPacket packet)
+    protected void SendInputToServer(PendingInput pendingInput)
+    {
+        if (netPeer == null)
+        { return; }
+        // NetDataWriter netData = inputPacket.
+        NetDataWriter inputData = new NetDataWriter();
+        inputData.Put((int)PacketType.Movement);
+        inputData.Put(Id);
+        inputData.Put(pendingInput.sequenceNumber);
+        inputData.Put(pendingInput.nTime);
+        inputData.Put(pendingInput.nInput.InputX);
+        inputData.Put(pendingInput.nInput.InputY);
+        inputData.Put(pendingInput.nInput.Jump);
+        inputData.Put(pendingInput.nInput.MouseX);
+        inputData.Put(pendingInput.nInput.MouseY);
+        netPeer.Send(inputData, DeliveryMethod.ReliableOrdered);
+    }
 
     public void AddPlayerView(PlayerViewClient playerViewClient)
     {
@@ -598,7 +634,6 @@ public class Client : NetworkManagerClient
     {
        if (playerViewClients.ContainsKey(id))
         {
-            _currentRPCExcecuter = id;
             SendRPCToServer(methodName, rpcTarget, parameters);
         }
     }
@@ -606,89 +641,20 @@ public class Client : NetworkManagerClient
     private void SendRPCToServer(string methodName, RPCTarget rpcTarget, params object[] parameters)
     {
         NetDataWriter rpcData = new NetDataWriter();
+        RPCPacket rPCPacket;
+
+        rPCPacket = new RPCPacket();
         rpcData.Put((int)PacketType.RPC);
-        rpcData.Put(netPeer.Id);
-        rpcData.Put((int)rpcTarget);
-        //send method name
-        rpcData.Put(methodName);
-        //Send The parameters length
-        if (parameters == null)
-        { rpcData.Put((int)0); }
-        else
-        {
-            rpcData.Put((int)parameters.Length);
-            //Send The parameters order
-            rpcData.Put(RPCParametersOrder(parameters));
-            for (int i = 0; i < parameters.Length; i++)
-            {
-                Type type = parameters[i].GetType();
-                if (type.Equals(typeof(float)))
-                {
-                    rpcData.Put((float)parameters[i]);
-                }
-                else if (type.Equals(typeof(double)))
-                {
-                    rpcData.Put((double)parameters[i]);
-                }
-                else if (type.Equals(typeof(long)))
-                {
-                    rpcData.Put((long)parameters[i]);
-                }
-                else if (type.Equals(typeof(ulong)))
-                {
-                    rpcData.Put((ulong)parameters[i]);
-                }
-                else if (type.Equals(typeof(int)))
-                {
-                    rpcData.Put((int)parameters[i]);
-                }
-                else if (type.Equals(typeof(uint)))
-                {
-                    rpcData.Put((uint)parameters[i]);
-                }
-                else if (type.Equals(typeof(char)))
-                {
-                    rpcData.Put((char)parameters[i]);
-                }
-                else if (type.Equals(typeof(ushort)))
-                {
-                    rpcData.Put((ushort)parameters[i]);
-                }
-                else if (type.Equals(typeof(short)))
-                {
-                    rpcData.Put((short)parameters[i]);
-                }
-                else if (type.Equals(typeof(sbyte)))
-                {
-                    rpcData.Put((sbyte)parameters[i]);
-                }
-                else if (type.Equals(typeof(byte)))
-                {
-                    rpcData.Put((byte)parameters[i]);
-                }
-                else if (type.Equals(typeof(bool)))
-                {
-                    rpcData.Put((bool)parameters[i]);
-                }
-                else if (type.Equals(typeof(string)))
-                {
-                    rpcData.Put((string)parameters[i]);
-                }
-                // rpcData.Put(param[i]);
-            }
-        }
-       netPeer.Send(rpcData, DeliveryMethod.ReliableOrdered);
+        rPCPacket.Serialize(rpcData);
+        netPeer.Send(rpcData, DeliveryMethod.ReliableOrdered);
+        Debug.Log("I sent some RPC to the server");
     }
 
-    void ReceiveRPCFromServer( string methodName, params object[] parameters)
+    void ReceiveRPCFromServer( string methodName, int idOfSender,params object[] parameters)
     {
+        //idOfSender : is the peer id , received in the server 
         Debug.Log("I received RPC from the server");
-        foreach (KeyValuePair<int, PlayerViewClient> playerView in playerViewClients)
-       {
-           if (_currentRPCExcecuter == playerView.Value.Id)
-            {
-                playerView.Value.ReceiveRPC(methodName, parameters);
-            }
-        }
+        playerViewClients[idOfSender].ReceiveRPC(methodName, parameters);
     }
+    #endregion
 }

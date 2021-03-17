@@ -14,22 +14,31 @@ public enum PacketType
 
 public struct InputPacket : INetSerializable
 {
-    int id;
-    float analogueOne;
-    float analogueTwo;
+    public  int Id;
+    public  float mouseX;
+    public  float mouseY;
+    public  float inputX;
+    public  float inputY;
+    public  bool jump;
 
     public void Deserialize(NetDataReader reader)
     {
-        id = reader.GetInt();
-        analogueOne = reader.GetFloat();
-        analogueTwo = reader.GetFloat();
+        Id = reader.GetInt();
+        mouseX = reader.GetFloat();
+        mouseY = reader.GetFloat();
+        inputX = reader.GetFloat();
+        inputY = reader.GetFloat();
+        
     }
 
     public void Serialize(NetDataWriter writer)
     {
-        writer.Put(id);
-        writer.Put(analogueOne);
-        writer.Put(analogueTwo);
+        writer.Put(Id);
+        writer.Put(mouseX);
+        writer.Put(mouseY);
+        writer.Put(inputX);
+        writer.Put(inputY);
+        writer.Put(jump);
     }
 }
 
@@ -39,7 +48,8 @@ public struct PlayerState : INetSerializable
     PacketType type;
     public int Id;
     public Vector3 Position;
-    public float Rotation;
+    public Quaternion Rotation;
+
 
     public void Deserialize(NetDataReader reader)
     {
@@ -47,7 +57,10 @@ public struct PlayerState : INetSerializable
         Position.x = reader.GetFloat();
         Position.y = reader.GetFloat();
         Position.z = reader.GetFloat();
-        //Position = reader.GetVector3();
+        Rotation.x = reader.GetFloat();
+        Rotation.y = reader.GetFloat();
+        Rotation.z = reader.GetFloat();
+        Rotation.w = reader.GetFloat();
     }
 
     public void Serialize(NetDataWriter writer)
@@ -56,7 +69,10 @@ public struct PlayerState : INetSerializable
         writer.Put(Position.x);
         writer.Put(Position.y);
         writer.Put(Position.z);
-        writer.Put(Rotation);
+        writer.Put(Rotation.x);
+        writer.Put(Rotation.y);
+        writer.Put(Rotation.z);
+        writer.Put(Rotation.w);
     }
 }
 
@@ -88,8 +104,10 @@ public class PlayerLeavedPacket
 //Manual serializable packets
 public struct SpawnPacket : INetSerializable
 {
-    public long PlayerId;
+    public int PlayerId;
     public Vector3 Position;
+    public Quaternion Rotation;
+    public Color Albedo;
 
     public void Serialize(NetDataWriter writer)
     {
@@ -97,16 +115,172 @@ public struct SpawnPacket : INetSerializable
         writer.Put(Position.x);
         writer.Put(Position.y);
         writer.Put(Position.z);
+        writer.Put(Rotation.x);
+        writer.Put(Rotation.y);
+        writer.Put(Rotation.z);
+        writer.Put(Rotation.w);
+        writer.Put(Albedo.r);
+        writer.Put(Albedo.g);
+        writer.Put(Albedo.b);
     }
 
     public void Deserialize(NetDataReader reader)
     {
-        PlayerId = reader.GetLong();
+        PlayerId = reader.GetInt();
         Position.x = reader.GetFloat();
         Position.y = reader.GetFloat();
         Position.z = reader.GetFloat();
+        Rotation.x = reader.GetFloat();
+        Rotation.y = reader.GetFloat();
+        Rotation.z = reader.GetFloat();
+        Rotation.w = reader.GetFloat();
+        Albedo.r = reader.GetFloat();
+        Albedo.g = reader.GetFloat();
+        Albedo.b = reader.GetFloat();
     }
 }
+
+public struct RPCPacket
+{
+    public int senderPeerId;
+    public RPCTarget rpcTarget;
+    public string methodName;
+    public int parameterLength;
+    public string parametersOrder;
+    public object[] parameters;
+
+    public void Serialize(NetDataWriter writer)
+    {
+        writer.Put(senderPeerId);
+        writer.Put((int)rpcTarget);
+        writer.Put(methodName);
+        if (parameters == null)
+        { writer.Put((int)0); }
+        else
+        {
+            writer.Put(parameters.Length);
+            writer.Put(parametersOrder);
+            System.Array.ForEach<object>(parameters, parameter =>
+            {
+                System.Type type = parameter.GetType();
+                if (type.Equals(typeof(float)))
+                {
+                    writer.Put((float)parameter);
+                }
+                else if (type.Equals(typeof(double)))
+                {
+                    writer.Put((double)parameter);
+                }
+                else if (type.Equals(typeof(long)))
+                {
+                    writer.Put((long)parameter);
+                }
+                else if (type.Equals(typeof(ulong)))
+                {
+                    writer.Put((ulong)parameter);
+                }
+                else if (type.Equals(typeof(int)))
+                {
+                    writer.Put((int)parameter);
+                }
+                else if (type.Equals(typeof(uint)))
+                {
+                    writer.Put((uint)parameter);
+                }
+                else if (type.Equals(typeof(char)))
+                {
+                    writer.Put((char)parameter);
+                }
+                else if (type.Equals(typeof(ushort)))
+                {
+                    writer.Put((ushort)parameter);
+                }
+                else if (type.Equals(typeof(short)))
+                {
+                    writer.Put((short)parameter);
+                }
+                else if (type.Equals(typeof(sbyte)))
+                {
+                    writer.Put((sbyte)parameter);
+                }
+                else if (type.Equals(typeof(byte)))
+                {
+                    writer.Put((byte)parameter);
+                }
+                else if (type.Equals(typeof(bool)))
+                {
+                    writer.Put((bool)parameter);
+                }
+                else if (type.Equals(typeof(string)))
+                {
+                    writer.Put((string)parameter);
+                }
+            });
+        }
+    }
+
+    public void Deserialize(NetDataReader reader)
+    {
+        senderPeerId = reader.GetInt();
+        rpcTarget = (RPCTarget)reader.GetInt();
+        methodName = reader.GetString();
+        parameterLength = reader.GetInt();
+        if (parameterLength > 0)
+        {
+            parametersOrder = reader.GetString();
+            parameters = new object[parameterLength];
+            int index = 0;
+            var self = this;
+            System.Array.ForEach<char>(parametersOrder.ToCharArray(), (typename) =>
+            {
+                switch (typename)
+                {
+                    case RPCParametersTypes.FLOAT:
+                        self.parameters[index] = reader.GetFloat();
+                        break;
+                    case RPCParametersTypes.DOUBLE:
+                        self.parameters[index] = reader.GetDouble();
+                        break;
+                    case RPCParametersTypes.LONG:
+                        self.parameters[index] = reader.GetLong();
+                        break;
+                    case RPCParametersTypes.ULONG:
+                        self.parameters[index] = reader.GetULong();
+                        break;
+                    case RPCParametersTypes.INT:
+                        self.parameters[index] = reader.GetInt();
+                        break;
+                    case RPCParametersTypes.UINT:
+                        self.parameters[index] = reader.GetUInt();
+                        break;
+                    case RPCParametersTypes.CHAR:
+                        self.parameters[index] = reader.GetChar();
+                        break;
+                    case RPCParametersTypes.USHORT:
+                        self.parameters[index] = reader.GetChar();
+                        break;
+                    case RPCParametersTypes.SHORT:
+                        self.parameters[index] = reader.GetShort();
+                        break;
+                    case RPCParametersTypes.SBYTE:
+                        self.parameters[index] = reader.GetSByte();
+                        break;
+                    case RPCParametersTypes.BYTE:
+                        self.parameters[index] = reader.GetByte();
+                        break;
+                    case RPCParametersTypes.BOOL:
+                        self.parameters[index] = reader.GetBool();
+                        break;
+                    case RPCParametersTypes.STRING:
+                        self.parameters[index] = reader.GetString();
+                        break;
+                    default: break;
+                }
+                index++;
+            });
+        }
+    }
+};
 
 
 public class Packets : MonoBehaviour

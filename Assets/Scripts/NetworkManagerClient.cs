@@ -77,25 +77,6 @@ public class NetworkManagerClient : MonoBehaviour, INetEventListener
         }
     }
 
-    //protected void SendInputToServer(InputPacket packet)
-    protected void SendInputToServer(PendingInput pendingInput)
-    {
-        if (netPeer == null)
-        { return;}
-        // NetDataWriter netData = inputPacket.
-        NetDataWriter inputData = new NetDataWriter();
-        inputData.Put((int)PacketType.Movement);
-        inputData.Put(netPeer.Id);
-        inputData.Put(pendingInput.sequenceNumber);
-        inputData.Put(pendingInput.nTime);
-        inputData.Put(pendingInput.nInput.inputX);
-        inputData.Put(pendingInput.nInput.inputY);
-        inputData.Put(pendingInput.nInput.jump);
-        inputData.Put(pendingInput.nInput.mouseX);
-        inputData.Put(pendingInput.nInput.mouseY);
-        netPeer.Send(inputData, DeliveryMethod.ReliableOrdered);
-    }
-
     public void OnConnectionRequest(ConnectionRequest request)
     {
         throw new NotImplementedException();
