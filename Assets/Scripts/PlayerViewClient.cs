@@ -109,8 +109,13 @@ public class PlayerViewClient : MonoBehaviour
     #region INPUT
     void UpdatePlayerInput()
     {
-        _playerInput.InputX = Input.GetAxis("Horizontal");
-        _playerInput.InputY = Input.GetAxis("Vertical");
+        /* _playerInput.InputX = Input.GetAxis("Horizontal");
+         _playerInput.InputY = Input.GetAxis("Vertical");
+         _playerInput.Jump = Input.GetButtonDown("Jump");
+         _playerInput.MouseX = Input.GetAxis("Mouse X");
+         _playerInput.MouseY = Input.GetAxis("Mouse Y");*/
+        _playerInput.InputX = Input.GetAxisRaw("Horizontal");
+        _playerInput.InputY = Input.GetAxisRaw("Vertical");
         _playerInput.Jump = Input.GetButtonDown("Jump");
         _playerInput.MouseX = Input.GetAxis("Mouse X");
         _playerInput.MouseY = Input.GetAxis("Mouse Y");

@@ -9,8 +9,6 @@ using System.Net.Sockets;
 public class NetworkManagerClient : MonoBehaviour, INetEventListener
 {
     protected NetManager _client;
-    const string SERVER_URL = "localhost";
-    const int PORT = 9050;
     protected NetDataWriter writer;
     protected InputPacket inputPacket;
     protected NetPeer netPeer;
@@ -35,7 +33,7 @@ public class NetworkManagerClient : MonoBehaviour, INetEventListener
         {
             return;
         }
-        _client.Connect(SERVER_URL, PORT, connectionKey);
+        _client.Connect(AuthServer.SERVER_URL, AuthServer.SERVER_PORT, connectionKey);
     }
 
     private void OnDestroy()

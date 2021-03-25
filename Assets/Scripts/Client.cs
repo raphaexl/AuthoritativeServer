@@ -5,32 +5,41 @@ using LiteNetLib;
 using LiteNetLib.Utils;
 using System;
 
-public struct PendingInput
+public class PendingInput
 {
     public Tools.NInput nInput;
     public float nTime; //When did we set that input (received it);
     public int sequenceNumber;
+    public bool processed;
+
+
+    public PendingInput()
+    {
+        this.sequenceNumber = -1000;
+        this.processed = false;
+    }
 
     public PendingInput(Tools.NInput _nInput, float _nTime, int seqNumber)
     {
         this.nInput = _nInput;
         this.nTime = _nTime;
         this.sequenceNumber = seqNumber;
+        this.processed = false;
     }
 }
 
-public struct ServerState
+public class ServerState
 {
     public int peerId;
     public Vector3 position;
     public Quaternion rotation;
     public int lastProcessedInput;
+    public bool processed = false;
 };
 
 public class Client : NetworkManagerClient
 {
     public static Client Instance;
-    const string CONNECTION_KEY = "KEYOFCONNCETION";
     [SerializeField]
     GameObject playerGO= default;
 
@@ -56,12 +65,6 @@ public class Client : NetworkManagerClient
 
     int _inputSeqNumber;
 
-    const string SERVER_URL = "localhost";
-    const int PORT = 9050;
-    const int MAX_LENGTH = 500;
-    const int CLIENT_SLEEP_TIME = 15;
-    const float GAME_FPS = 50f;
-
     bool istantiated = false;
     bool isConnected = false;
 
@@ -70,6 +73,7 @@ public class Client : NetworkManagerClient
     //List of the Player Views Here
     public Dictionary<int,  PlayerViewClient> playerViewClients;
     List<ServerState> _serverStates;
+    List<ServerState> _clientStates;
 
     //Lag compensation
     StateBuffer latestState;
@@ -82,9 +86,6 @@ public class Client : NetworkManagerClient
     Vector3 latestPos;
     Quaternion latestRot;
     //Lag compensation
-   // float currentTime = 0;
-    //double currentPacketTime = 0;
-  //  double lastPacketTime = 0;
     Vector3 positionAtLastPacket = Vector3.zero;
     Quaternion rotationAtLastPacket = Quaternion.identity;
 
@@ -117,8 +118,9 @@ public class Client : NetworkManagerClient
         _previousTime = Time.time;
         playerViewClients = new Dictionary<int, PlayerViewClient>();
         _serverStates = new List<ServerState>();
+        _clientStates = new List<ServerState>();
        //Should be OnEnable
-       customUpdateCoroutine = StartCoroutine(CustomUpdate(GAME_FPS));
+       customUpdateCoroutine = StartCoroutine(CustomUpdate(AuthServer.GAME_FPS));
     }
 
     /*
@@ -131,50 +133,84 @@ public class Client : NetworkManagerClient
     {
         ClientUIController.Instance.onClientConnected.text = "Connecting...";
         ClientUIController.Instance.onClientReceiveFromServer.text = "";
-        base.Connect(CONNECTION_KEY);
+        base.Connect(AuthServer.CONNECTION_KEY);
     }
-
-
+    
+    private void FixedUpdate()
+    {
+        processInputs();
+      //  processServerState();
+    }
+    
     IEnumerator CustomUpdate(float fpsRate)
     {
         WaitForSeconds wait = new WaitForSeconds(1.0f / fpsRate);
 
         while (true)
         {
-            processInputs();
+           // processInputs();
             processServerState();
+           // EntitiesInterpolation();
             yield return wait;
         }
     }
 
     void processServerState()
     {
+        List<ServerState> toRemove;
+
+        //may be store and remove the applied states ??
+        toRemove = new List<ServerState>();
+
         _serverStates.ForEach(serverState =>
         {
-            if (serverState.peerId == Id) //Server Reconciliation
+            if (serverState.peerId == Id  && !serverState.processed) //Server Reconciliation
             {
                 ServerAuthoritativeState(serverState);
-                ServerReconciliation(serverState);
-            }
-            else
-            {
-                RemotePlayersMove(serverState);
+                if (serverState.processed)
+                {
+                    ServerReconciliation(serverState);
+                    toRemove.Add(serverState);
+                }
             }
         });
-        _serverStates.Clear();
+        toRemove.ForEach(serverState =>
+       {
+           if (serverState.processed) { _serverStates.Remove(serverState); }
+       });
+        toRemove.Clear();
+        Debug.Log($"Server State Cunt : { _serverStates.Count}");
+    }
+    //Won't allow update from inherited
+
+    new private void Update()
+    {
+
+        base.Update();
+        if (!isConnected) { return; }
+
+        if (Input.GetKey(KeyCode.P))
+        {
+            displayMarked();
+        }
+
+        //Never do this but :-)
+        clientSidePrediction = ClientUIController.Instance.clientSidePrediction;
+        serverReconciliation = ClientUIController.Instance.serverReconcilation;
+        interpolation = ClientUIController.Instance.lagCompensation;
     }
 
     #region LiteNetLib overloads
     private void OnDisable()
     {
-        StopCoroutine(customUpdateCoroutine);
+        if (customUpdateCoroutine != null) { StopCoroutine(customUpdateCoroutine); }
         customUpdateCoroutine = null;
     }
 
     public void DiconnectToServer()
     {
         ClientUIController.Instance.onClientConnected.text = "Disconnected";
-        base.Connect(CONNECTION_KEY);
+        base.Connect(AuthServer.CONNECTION_KEY);
     }
 
     public override void OnPeerDisconnected(NetPeer peer, DisconnectInfo disconnectInfo)
@@ -251,13 +287,15 @@ public class Client : NetworkManagerClient
         float deltaInputY = Mathf.Abs(currentNInput.InputY - previousNInput.InputY);
         float deltaMouseX = Mathf.Abs(currentNInput.MouseX - previousNInput.MouseX);
         float deltaMouseY = Mathf.Abs(currentNInput.MouseY - previousNInput.MouseY);
-        float epsilon = 0f;// 1e-3f;
+        float epsilon = 1e-6f; //0f;
 
-        return (
-            currentNInput.Jump || deltaInputX > epsilon || deltaInputY > epsilon
-            || deltaMouseX > epsilon || deltaMouseY > epsilon || Mathf.Abs(currentNInput.InputX) > epsilon
-            || Mathf.Abs(currentNInput.InputY) > epsilon
-            );
+        /*  return (
+              currentNInput.Jump || deltaInputX > epsilon || deltaInputY > epsilon
+              || deltaMouseX > epsilon || deltaMouseY > epsilon || Mathf.Abs(currentNInput.InputX) > epsilon
+              || Mathf.Abs(currentNInput.InputY) > epsilon
+              );
+        */
+        return currentNInput != previousNInput;
     }
     public void setPlayerInputs(Tools.NInput nInput)
     {
@@ -266,39 +304,157 @@ public class Client : NetworkManagerClient
 
     bool _needUpdate = false;
 
+
+    List<int> markedSeq = new List<int>();
+
+    void processPendingInput(PendingInput pendingInput, bool check)
+    {
+       /* if (check)
+        {
+            if (markedSeq.Exists(foundIndex => foundIndex == pendingInput.sequenceNumber))
+            {
+                Debug.Log("Already Processed Input");
+                //return;
+            }
+        }else
+        markedSeq.Add(pendingInput.sequenceNumber);*/
+        MoveLocalplayer(pendingInput.nInput, pendingInput.nTime);
+    }
+
+    List<ServerState> _serverRec = new List<ServerState>();
+    List<ServerState> _corespondingRec = new List<ServerState>();
+    List<ServerState> _recordedRec = new List<ServerState>();
+    void displayMarked()
+    {
+        /*  markedSeq.ForEach((index) =>
+          {
+              Debug.Log($" Client state : Position : ({_clientStates[index].position.x}, {_clientStates[index].position.y}, {_clientStates[index].position.z}) " +
+                $" Rotation({_clientStates[index].rotation.x}, {_clientStates[index].rotation.y}, {_clientStates[index].rotation.z})");
+          });
+          _serverRec.ForEach((serverState) => {
+              Debug.Log($" Applied state : Position : ({serverState.position.x}, {serverState.position.y}, {serverState.position.z})  Rotation({serverState.rotation.x}, {serverState.rotation.y}, {serverState.rotation.z}),");
+          }
+          );
+          _corespondingRec.ForEach((serverState) => {
+              Debug.Log($" Server state : Position : ({serverState.position.x}, {serverState.position.y}, {serverState.position.z})  Rotation({serverState.rotation.x}, {serverState.rotation.y}, {serverState.rotation.z}),");
+          }
+         );
+          */
+        _corespondingRec.ForEach((serverState) => {
+            Debug.Log($" Client state : Position : ({serverState.position.x}, {serverState.position.y}, {serverState.position.z})  Rotation({serverState.rotation.x}, {serverState.rotation.y}, {serverState.rotation.z}),");
+        }
+        );
+        _recordedRec.ForEach((serverState) => {
+            Debug.Log($" Server state : Position : ({serverState.position.x}, {serverState.position.y}, {serverState.position.z})  Rotation({serverState.rotation.x}, {serverState.rotation.y}, {serverState.rotation.z}),");
+        }
+      );
+    }
+
     void processInputs()
     {
-      //  float currentTime = Time.realtimeSinceStartup; //time;
-        float currentTime = Time.time;
+        float currentTime = Time.timeSinceLevelLoad;
         float dt_sec = currentTime - _previousTime;
 
+        if (!_localPlayer) { return; }
+        /*
+         *  This works but updating does'nt
+         * */
+       /* currentNInput.InputX = Input.GetAxis("Horizontal");
+        currentNInput.InputY = Input.GetAxis("Vertical");
+        currentNInput.Jump = Input.GetButtonDown("Jump");
+        currentNInput.MouseX = Input.GetAxis("Mouse X");
+        currentNInput.MouseY = Input.GetAxis("Mouse Y");
+        */
         //!!!!!!!_pendingNInputs.Count == 0
-        _needUpdate = UpdateInput();
-        if (! _needUpdate && _pendingNInputs.Count == 0) { return; } //Nothing to process
-
-        if (!_needUpdate && _pendingNInputs.Count > 0)
-        {
-            Debug.Log("Check This Case Please ");
-            return;
-        }
+        //_needUpdate = UpdateInput();
+        //if (! _needUpdate) { return; } //Nothing to process
         PendingInput pendingInput;
 
-        pendingInput = new PendingInput(currentNInput, dt_sec, _inputSeqNumber++);
+        pendingInput = new PendingInput(currentNInput, dt_sec, _inputSeqNumber);
         //Send the input to the server here
         SendInputToServer(pendingInput);
+
         //If there is client side prediction enabled do it
-        if (clientSidePrediction)
+        //if (clientSidePrediction)
         {
-            MoveLocalplayer(currentNInput, dt_sec); //may be Time.deltaTime should do as well ???
+            //MoveLocalplayer(currentNInput, dt_sec);
+            //Debug.Log($"Sent Input inputX : {pendingInput.nInput.InputX} inputY : {pendingInput.nInput.InputY} mouseX : {pendingInput.nInput.MouseX} mouseY {pendingInput.nInput.MouseY} nTime {pendingInput.nTime} ");
+            processPendingInput(pendingInput, false);
+            ServerState clientState = new ServerState();
+            clientState.position = _localPlayer.GetComponent<PlayerController>().transform.position;
+            clientState.rotation = _localPlayer.GetComponent<PlayerController>().transform.rotation;
+            clientState.lastProcessedInput = _inputSeqNumber;
+      //      Debug.Log($" New Rotation :({clientState.rotation.x}, {clientState.rotation.x}, {clientState.rotation.z}, {clientState.rotation.w})");
+            _clientStates.Add(clientState);
         }
         _pendingNInputs.Add(pendingInput);
+        _inputSeqNumber++;
         _previousTime = currentTime;
         previousNInput = currentNInput;
     }
     #endregion
+    #region Attempt of tick !
+    public struct ClientState
+    {
+        public Vector3 position;
+        public Quaternion rotation;
+    };
+    public struct ClientInput
+    {
+        public Tools.NInput inputs;
+        public ClientInput(Tools.NInput input)
+        {
+            this.inputs = input;
+        }
+    };
+    private ClientState[] client_state_buffer = new ClientState[1024];
+    private ClientInput[] client_input_buffer = new ClientInput[1024];
+
+    void processInputs2()
+    {
+        SendInputToServer(new PendingInput(currentNInput, 0.1f, _inputSeqNumber));
+        int buffer_slot = this._inputSeqNumber % 1024;
+        client_input_buffer[buffer_slot].inputs = currentNInput;
+        client_state_buffer[buffer_slot].position = _localPlayer.GetComponent<PlayerController>().transform.position;
+        client_state_buffer[buffer_slot].rotation = _localPlayer.GetComponent<PlayerController>().transform.rotation;
+
+        _localPlayer.GetComponent<PlayerController>().ApplyInput(currentNInput, Time.deltaTime);
+
+    }
+
+    void processReceivedState()
+    {
+        _serverStates.ForEach(state =>
+        {
+            if (state.peerId == Id)
+            {
+                int buffer_slot = state.lastProcessedInput % 1024;
+                Vector3 position_error = state.position - client_state_buffer[buffer_slot].position;
+                if (position_error.sqrMagnitude > 1e-6f)
+                {
+                    Debug.Log(" Local Player ");
+                    _localPlayer.GetComponent<PlayerController>().transform.position = state.position;
+                    _localPlayer.GetComponent<PlayerController>().transform.rotation = state.rotation;
+
+                    int rewind_ticks = state.lastProcessedInput;
+                    while (rewind_ticks < _inputSeqNumber)
+                    {
+                        Debug.Log("Rewinding");
+                        buffer_slot = rewind_ticks % 1024;
+                        client_input_buffer[buffer_slot].inputs = currentNInput;
+                        client_state_buffer[buffer_slot].position = state.position;
+                        client_state_buffer[buffer_slot].rotation = state.rotation;
+                        _localPlayer.GetComponent<PlayerController>().ApplyInput(currentNInput, Time.deltaTime);
+                        rewind_ticks++;
+                    }
+                }
+            }
+        });
+    }
+    #endregion
     #region Packets from The Server
 
-public override void OnNetworkReceive(NetPeer peer, NetPacketReader reader, DeliveryMethod deliveryMethod)
+    public override void OnNetworkReceive(NetPeer peer, NetPacketReader reader, DeliveryMethod deliveryMethod)
     {
         PacketType type;
 
@@ -384,6 +540,7 @@ public override void OnNetworkReceive(NetPeer peer, NetPacketReader reader, Deli
     }
     #endregion
     #region Client Side Prediction and Server Reconciliation
+
     void ServerAuthoritativeState(ServerState serverState)
     {
         //Set server Authoritative Position and rotation
@@ -391,13 +548,28 @@ public override void OnNetworkReceive(NetPeer peer, NetPacketReader reader, Deli
           transform.rotation = serverState.rotation;*/
         /* _localPlayer.transform.position = serverState.position;
          _localPlayer.transform.rotation = serverState.rotation;*/
-        if (_localPlayer) { _localPlayer.SetTransform(serverState.position, serverState.rotation); }
+
+       /* Debug.Log($" server state : Position : ({serverState.position.x}, {serverState.position.y}, {serverState.position.z})  Rotation({serverState.rotation.x}, {serverState.rotation.x}, {serverState.rotation.z}),");
+       
+        Debug.Log($" current state : Position : ({_localPlayer.GetComponent<PlayerController>().transform.position.x}, {_localPlayer.GetComponent<PlayerController>().transform.position.y}, {_localPlayer.GetComponent<PlayerController>().transform.position.z})  " +
+            $"Rotation({_localPlayer.GetComponent<PlayerController>().transform.rotation.x}, {_localPlayer.GetComponent<PlayerController>().transform.rotation.y}, {_localPlayer.GetComponent<PlayerController>().transform.rotation.z})");*/
+        if (_localPlayer) {
+            _localPlayer.SetTransform(serverState.position, serverState.rotation);
+            serverState.processed = true;
+            //if (serverState.lastProcessedInput >= 0 && _recordedRec.Find(state => state == serverState) == null)
+            //{
+            //    _recordedRec.Add(serverState);
+            //    _corespondingRec.Add(_clientStates[serverState.lastProcessedInput]);
+            //}
+        }
+        else { Debug.Log("But Why ???"); return; }
     }
+
+   
 
     void ServerReconciliation(ServerState serverState)
     {
-
-        if (serverReconciliation)
+     //   if (serverReconciliation)
         {
             List<PendingInput> toRemove = new List<PendingInput>();
             _pendingNInputs.ForEach(pendingInput =>
@@ -407,12 +579,45 @@ public override void OnNetworkReceive(NetPeer peer, NetPacketReader reader, Deli
                     toRemove.Add(pendingInput);
                     // _pendingNInputs.Remove(pendingInput);
                 }
-                else
+               else
                 {
-                    //Debug.Log($"NOT PROCESSED BY THE SERVER {pendingInput.sequenceNumber} last processed by the server : ({serverState.lastProcessedInput})");
                     //Apply the input
-                    MoveLocalplayer(pendingInput.nInput, pendingInput.nTime);
+                    {
+                     //  Debug.Log($"NOT PROCESSED BY THE SERVER {pendingInput.sequenceNumber} last processed by the server : ({serverState.lastProcessedInput})");
+                    //    Debug.Log($" server state : Position : ({serverState.position.x}, {serverState.position.y}, {serverState.position.z})  Rotation({serverState.rotation.x}, {serverState.rotation.y}, {serverState.rotation.z}, {serverState.rotation.w}),");
+                      //  Debug.Log($" current state : Position : ({_localPlayer.GetComponent<PlayerController>().transform.position.x}, {_localPlayer.GetComponent<PlayerController>().transform.position.y}, {_localPlayer.GetComponent<PlayerController>().transform.position.z})  " +
+                        //    $"Rotation({_localPlayer.GetComponent<PlayerController>().transform.rotation.x}, {_localPlayer.GetComponent<PlayerController>().transform.rotation.y}, {_localPlayer.GetComponent<PlayerController>().transform.rotation.z}, {_localPlayer.GetComponent<PlayerController>().transform.rotation.w})");
+                       processPendingInput(pendingInput, true);
+                        ServerState _cState = new ServerState();
+                        _cState.position = _localPlayer.GetComponent<PlayerController>().transform.position;
+                        _cState.rotation = _localPlayer.GetComponent<PlayerController>().transform.rotation;
+                        _cState.lastProcessedInput = pendingInput.sequenceNumber;
+                        // Debug.Log($" New Rotation :({clientState.rotation.x}, {clientState.rotation.x}, {clientState.rotation.z}, {clientState.rotation.w})");
+                        _serverRec.Add(_cState);
+                        //Debug.Log($"Correct state {serverState.lastProcessedInput} lastInput :{_inputSeqNumber - 1} pending : {pendingInput.sequenceNumber}");
+                    }
                 }
+               // if (pendingInput.sequenceNumber == serverState.lastProcessedInput)
+               // {
+               //     //     Debug.Log($" Last state : Position : ({_localPlayer.GetComponent<PlayerController>().transform.position.x}, {_localPlayer.GetComponent<PlayerController>().transform.position.y}, {_localPlayer.GetComponent<PlayerController>().transform.position.z})  Rotation({_localPlayer.GetComponent<PlayerController>().transform.rotation.x}, {_localPlayer.GetComponent<PlayerController>().transform.rotation.y}, {_localPlayer.GetComponent<PlayerController>().transform.rotation.z})");
+               //     //    MoveLocalplayer(pendingInput.nInput, pendingInput.nTime);
+               //   /*  _clientStates.ForEach(clientState =>
+               //     {
+               //         if (clientState.position == serverState.position)
+               //         {
+               //             Debug.Log($"The Corresponding Input was :  {clientState.lastProcessedInput} but the server  {serverState.lastProcessedInput}");
+               //         }
+               //     });*/
+               ///*     Debug.Log($" server state : Position : ({serverState.position.x}, {serverState.position.y}, {serverState.position.z})  Rotation({serverState.rotation.x}, {serverState.rotation.x}, {serverState.rotation.z}),");
+               //     Debug.Log($" recorded state : Position : ({_clientStates[pendingInput.sequenceNumber].position.x}, {_clientStates[pendingInput.sequenceNumber].position.y}, {_clientStates[pendingInput.sequenceNumber].position.z}) " +
+               //         $" Rotation({_clientStates[pendingInput.sequenceNumber].rotation.x}, {_clientStates[pendingInput.sequenceNumber].rotation.y}, {_clientStates[pendingInput.sequenceNumber].rotation.z})");
+               //     Debug.Log($" current state : Position : ({_localPlayer.GetComponent<PlayerController>().transform.position.x}, {_localPlayer.GetComponent<PlayerController>().transform.position.y}, {_localPlayer.GetComponent<PlayerController>().transform.position.z})  " +
+               //         $"Rotation({_localPlayer.GetComponent<PlayerController>().transform.rotation.x}, {_localPlayer.GetComponent<PlayerController>().transform.rotation.y}, {_localPlayer.GetComponent<PlayerController>().transform.rotation.z})");
+               //     Debug.Log($"NOT PROCESSED BY THE SERVER {_inputSeqNumber - 1 - pendingInput.sequenceNumber} last processed by the server : ({serverState.lastProcessedInput})");
+               //     */
+               //     toRemove.Add(pendingInput);
+               //   // _localPlayer.SetTransform(serverState.position, serverState.rotation);
+               // }
             });
             toRemove.ForEach(pendingInput =>
             {
@@ -420,14 +625,15 @@ public override void OnNetworkReceive(NetPeer peer, NetPacketReader reader, Deli
             });
             toRemove.Clear();
         }
-        else
+      //  else
         {
             //Drop all recorded inputs
-            _pendingNInputs.Clear();
+         //   _pendingNInputs.Clear();
         }
+
     }
     #endregion
-
+    #region OnServerStatePacket Receive for clients states
     void OnServerStatePacketReceive(ServerState serverState)
     {
         if (serverState.peerId != Id)
@@ -438,11 +644,10 @@ public override void OnNetworkReceive(NetPeer peer, NetPacketReader reader, Deli
             {
                 //foundPlayer.SetTransform(serverState.position, serverState.rotation);
                 //Add the state to the positions buffer
-                float timestamp = Time.time;
                 StateBuffer stateBuffer = new StateBuffer();
                 stateBuffer.Position = serverState.position;
                 stateBuffer.Rotation = serverState.rotation;
-                stateBuffer.Timestamp = timestamp;
+                stateBuffer.Timestamp = Time.timeSinceLevelLoad;
 
                 latestPos = serverState.position;
                 latestRot = serverState.rotation;
@@ -457,12 +662,15 @@ public override void OnNetworkReceive(NetPeer peer, NetPacketReader reader, Deli
                 positionAtLastPacket = stateAtLastPacket.Position;
                 rotationAtLastPacket = stateAtLastPacket.Rotation;
 
-               /* positionAtLastPacket = transform.position;
-                rotationAtLastPacket = transform.rotation;*/
+                /* positionAtLastPacket = transform.position;
+                 rotationAtLastPacket = transform.rotation;*/
                 //foundPlayer.position_buff.add({ timestamp,  position, rotation })
+                foundPlayer.StateBuffers.Add(stateBuffer);
             }
         }
-        _serverStates.Add(serverState);
+        else {
+            _serverStates.Add(serverState); }
+        
     }
 
     void MoveLocalplayer(Tools.NInput nInput, float fpsRate)
@@ -497,21 +705,38 @@ public override void OnNetworkReceive(NetPeer peer, NetPacketReader reader, Deli
         remotePlayer.GetComponent<PlayerController>().transform.position = Vector3.Lerp(positionAtLastPacket, latestPos, (float)(currentTime / timeToReachGoal));
         remotePlayer.GetComponent<PlayerController>().transform.rotation = Quaternion.Lerp(rotationAtLastPacket, latestRot, (float)(currentTime / timeToReachGoal));
     }
+
+    void EntitiesInterpolation()
+    {
+        float now = Time.timeSinceLevelLoad;
+        float render_timestamp = now - 1.0f / AuthServer.SERVER_UPDATE_RATE;
+        _remotePlayers.ForEach(remotePlayer =>
+        {
+            while (remotePlayer.StateBuffers.Count >= 2 && (remotePlayer.StateBuffers[1].Timestamp <= render_timestamp))
+            {
+                remotePlayer.StateBuffers.RemoveAt(0);
+            }
+            if (remotePlayer.StateBuffers.Count >= 2 && (remotePlayer.StateBuffers[0].Timestamp <= render_timestamp && render_timestamp < remotePlayer.StateBuffers[1].Timestamp))
+            {
+                Vector3 pos1 = remotePlayer.StateBuffers[0].Position;
+                Vector3 pos2 = remotePlayer.StateBuffers[1].Position;
+                Quaternion rot1 = remotePlayer.StateBuffers[0].Rotation;
+                Quaternion rot2 = remotePlayer.StateBuffers[1].Rotation;
+
+                float timeToReachGoal = remotePlayer.StateBuffers[1].Timestamp - remotePlayer.StateBuffers[0].Timestamp;
+                currentTime = render_timestamp - remotePlayer.StateBuffers[0].Timestamp;
+                float t__ = render_timestamp - remotePlayer.StateBuffers[0].Timestamp;
+                remotePlayer.GetComponent<PlayerController>().transform.position = Vector3.Lerp(pos1, pos2, (float)(currentTime / timeToReachGoal));
+                remotePlayer.GetComponent<PlayerController>().transform.rotation = Quaternion.Lerp(rot1, rot2, (float)(currentTime / timeToReachGoal));
+            }
+        });
+    }
+    #endregion
+    #region Remove Self or Client on disconnection
     void SelfRemove()
     {
         Destroy(_localPlayer);
        // Destroy(this.gameObject);
-    }
-    //Won't allow update from inherited
-    new private void Update()
-    {
-        base.Update();
-        if (!isConnected){ return; }
-       
-        //Never do this but :-)
-        clientSidePrediction = ClientUIController.Instance.clientSidePrediction;
-        serverReconciliation = ClientUIController.Instance.serverReconcilation;
-        interpolation = ClientUIController.Instance.lagCompensation;
     }
 
     void OthersRemove(int id)
@@ -530,6 +755,7 @@ public override void OnNetworkReceive(NetPeer peer, NetPacketReader reader, Deli
         toDelete = null;
         playerViewClients.Remove(id);
     }
+    #endregion
     #region RPC Helper
     string RPCParametersOrder(params object[] parameters)
     {
@@ -607,14 +833,19 @@ public override void OnNetworkReceive(NetPeer peer, NetPacketReader reader, Deli
 
     #region Other things
     //protected void SendInputToServer(InputPacket packet)
+    int packetSent = 0;
     protected void SendInputToServer(PendingInput pendingInput)
     {
         if (netPeer == null)
-        { return; }
+        {
+            Debug.Log(" Not connected Yet ");
+            return;
+        }
         // NetDataWriter netData = inputPacket.
         NetDataWriter inputData = new NetDataWriter();
         inputData.Put((int)PacketType.Movement);
-        inputData.Put(Id);
+       // inputData.Put(Id);
+        inputData.Put(netPeer.Id);
         inputData.Put(pendingInput.sequenceNumber);
         inputData.Put(pendingInput.nTime);
         inputData.Put(pendingInput.nInput.InputX);

@@ -194,7 +194,7 @@ GameObject:
   m_Component:
   - component: {fileID: 7716473837266939709}
   - component: {fileID: 7716473837266939708}
-  - component: {fileID: 7716473837266939706}
+  - component: {fileID: 6526527271564712629}
   - component: {fileID: 2297801813932696031}
   m_Layer: 0
   m_Name: Player
@@ -238,7 +238,7 @@ CharacterController:
   m_SkinWidth: 0.08
   m_MinMoveDistance: 0.001
   m_Center: {x: 0, y: 0, z: 0}
---- !u!114 &7716473837266939706
+--- !u!114 &6526527271564712629
 MonoBehaviour:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}

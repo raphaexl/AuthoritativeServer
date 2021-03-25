@@ -29,7 +29,7 @@ public class PlayerController : MonoBehaviourRPC
         controller = GetComponent<CharacterController>();
     }
 
-    public void ApplyInput(Tools.NInput nIpunt, float fpsTick)
+    public void ApplyInput(Tools.NInput nInput, float fpsTick)
     {
         if (!controller) { return; }
 
@@ -38,28 +38,28 @@ public class PlayerController : MonoBehaviourRPC
         if (isGrounded && velocity.y < 0f)
         { velocity.y = -1f;}
 
-        if (nIpunt.Jump)
-        { velocity.y = Mathf.Sqrt(-2 * gravity * jumpHeight);}
+        if (nInput.Jump)
+        {velocity.y = Mathf.Sqrt(-2 * gravity * jumpHeight);}
 
-        Vector3 move = transform.right * nIpunt.InputX + transform.forward * nIpunt.InputY;
-        //transform.Translate(move * speed * fpsTick);
-        controller.Move(move * speed * fpsTick);
+        Vector3 move = transform.right * nInput.InputX + transform.forward * nInput.InputY;
+      //  Vector3 move = Vector3.right * nInput.InputX + Vector3.forward * nInput.InputY;
+         controller.Move(move * speed * fpsTick);
 
-        nIpunt.MouseX *= mouseSensitivity * fpsTick;
-        nIpunt.MouseY *= mouseSensitivity * fpsTick;
+        nInput.MouseX *= mouseSensitivity * fpsTick;
+        nInput.MouseY *= mouseSensitivity * fpsTick;
        
-        xRotation -= nIpunt.MouseY;
+        xRotation -= nInput.MouseY;
         xRotation = Mathf.Clamp(xRotation, -40f, 80f);
-        yRotation += nIpunt.MouseX;
+        yRotation += nInput.MouseX;
     //    yRotation = Mathf.Clamp(yRotation, -180f, 180f);
 
         transform.localRotation = Quaternion.Euler(xRotation, yRotation, 0);
-        //  transform.Rotate(Vector3.up * nIpunt.MouseX);
+        //  transform.Rotate(Vector3.up * nInput.MouseX);
         //   cameraTrans.localRotation = Quaternion.Euler(xRotation, 0, 0);
         velocity.y += gravity * fpsTick;
-        controller.Move(velocity * fpsTick);
-        //transform.Translate(move * speed * fpsTick);
-
+         controller.Move(velocity * fpsTick);
+       // transform.Translate(move * speed * fpsTick);
+      //  Debug.Log($" Rotation :({transform.rotation.x}, {transform.rotation.x}, {transform.rotation.z}, {transform.rotation.w})");
     }
 
     public void ApplyTransform(Vector3 position, Quaternion rotation)

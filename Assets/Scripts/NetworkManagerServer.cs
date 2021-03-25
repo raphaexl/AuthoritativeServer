@@ -25,7 +25,6 @@ public class ServerPlayer
 
 
     //Make the variables properties
-
     public ServerPlayer(int id, NetPeer peer, GameObject _gameObject)
     {
         _id = id;
@@ -33,6 +32,7 @@ public class ServerPlayer
         _maingameObject =_gameObject;
         _maingameObject.transform.GetChild(0).gameObject.GetComponent<Camera>().gameObject.SetActive(false);
         _clientInput = new List<PendingInput>();
+        _lastProcessedInput = -1000;
     }
 
     public void SetTransform(Vector3 pos, Quaternion rot)
@@ -48,11 +48,18 @@ public class ServerPlayer
 
     public override string ToString()
     {
+        Vector3 _position = _maingameObject.GetComponent<PlayerController>().transform.position;
+        Quaternion _rotation = _maingameObject.GetComponent<PlayerController>().transform.rotation;
         return ($" Id {_id} \n" +
-            $" Pos({_maingameObject.transform.position.x}, {_maingameObject.transform.position.y}, {_maingameObject.transform.position.z}) \n" +
-            $": Rot({_maingameObject.transform.rotation.x}, {_maingameObject.transform.rotation.y}, {_maingameObject.transform.rotation.z}, {_maingameObject.transform.rotation.w}) \n" +
+            $" Pos({_position.x}, {_position.y}, {_position.z}) \n" +
+            $": Rot({_rotation.x}, {_rotation.y}, {_rotation.z}, {_rotation.w}) \n" +
             $" : Color :-) ");
-       // return base.ToString();
+        /*
+        return ($" Id {_id} \n" +
+          $" Pos({_maingameObject.transform.position.x}, {_maingameObject.transform.position.y}, {_maingameObject.transform.position.z}) \n" +
+          $": Rot({_maingameObject.transform.rotation.x}, {_maingameObject.transform.rotation.y}, {_maingameObject.transform.rotation.z}, {_maingameObject.transform.rotation.w}) \n" +
+          $" : Color :-) ");*/
+        // return base.ToString();
     }
 }
 
@@ -60,10 +67,7 @@ public class NetworkManagerServer : MonoBehaviour, INetEventListener
 {
     protected EventBasedNetListener netListener;
     protected NetManager _server;
-    const int SERVER_PORT = 9050;
-    const int MAX_CONNECTION = 10;
-    const string CONNECTION_KEY = "KEYOFCONNCETION";
-    const float SERVER_UPDATE_RATE = .3f;
+
     private Coroutine updateRoutine;
 
     protected NetDataWriter writer;
@@ -72,16 +76,16 @@ public class NetworkManagerServer : MonoBehaviour, INetEventListener
     [SerializeField]
     GameObject playerPrefab;
 
-
     void Start()
     {
         _server = new NetManager(this);
+        _server.AutoRecycle = true;
         writer = new NetDataWriter();
-        _server.Start(SERVER_PORT);
+        _server.Start(AuthServer.SERVER_PORT);
         _serverPlayers = new List<ServerPlayer>();
         _rPCPackets = new List<ServerRPCPacket>();
-        Debug.Log($"Server Start at Port {SERVER_PORT}");
-        updateRoutine = StartCoroutine(serverUpdate(SERVER_UPDATE_RATE));
+        Debug.Log($"Server Start at Port {AuthServer.SERVER_PORT}");
+        updateRoutine = StartCoroutine(serverUpdate(AuthServer.SERVER_UPDATE_RATE));
     }
 
     /*private void OnEnable()
@@ -107,6 +111,7 @@ public class NetworkManagerServer : MonoBehaviour, INetEventListener
             // server update loop
             processClientsInput();  //Process each client input 
             sendWorldStateToClients(); //sendWorldState to all client
+            clearAppliedInputs();
             //Render world if we were to
             yield return wait;
         }
@@ -124,6 +129,9 @@ public class NetworkManagerServer : MonoBehaviour, INetEventListener
         return true;
     }
 
+    int lastProcessedInput = -1;
+    int packetReceived = 0;
+    int packetProcessed = 0;
     void ApplyClientPendingInputs(ServerPlayer serverPlayer)
     {
         serverPlayer._clientInput.ForEach(pendingInput =>
@@ -132,15 +140,40 @@ public class NetworkManagerServer : MonoBehaviour, INetEventListener
             {
                 //Apply  client pending Inputs
              //   Debug.Log("Applying pending Input");
-                serverPlayer._maingameObject.GetComponent<PlayerController>().ApplyInput(pendingInput.nInput, pendingInput.nTime);
-                serverPlayer._lastProcessedInput = pendingInput.sequenceNumber;
+            //  if (serverPlayer._lastProcessedInput == -1000)
+                {
+                    packetProcessed++;
+                    Debug.Log($"Applying + {packetProcessed}");
+                    serverPlayer._maingameObject.GetComponent<PlayerController>().ApplyInput(pendingInput.nInput, pendingInput.nTime);
+                    serverPlayer._lastProcessedInput = pendingInput.sequenceNumber; // + 1 Just for now
+                    pendingInput.processed = true;
+                    if (lastProcessedInput == -1) { lastProcessedInput = pendingInput.sequenceNumber; }
+                    else if (pendingInput.sequenceNumber - lastProcessedInput != 1) { Debug.Log("Something odd !!! Lost packet ??"); }
+                    else lastProcessedInput = pendingInput.sequenceNumber;
+                }
             }
               else
               {
                   Debug.Log($"Player : {serverPlayer._id} is cheating");
               }
         });
-        serverPlayer._clientInput.Clear();
+    }
+
+    void clearAppliedInputs()
+    {
+        List<PendingInput> pendingInputs = new List<PendingInput>();
+        _serverPlayers.ForEach(serverPlayer =>
+        {
+           serverPlayer._clientInput.ForEach((pendingInput) =>
+           {
+               if (pendingInput.processed) { pendingInputs.Add(pendingInput); }
+           });
+            pendingInputs.ForEach(pendingInput =>
+            {
+                serverPlayer._clientInput.Remove(pendingInput);
+            });
+        });
+        pendingInputs.Clear();
     }
 
     void processClientsInput()
@@ -156,10 +189,11 @@ public class NetworkManagerServer : MonoBehaviour, INetEventListener
         _serverPlayers.ForEach(player =>
         {
             NetDataWriter transformData = new NetDataWriter();
-
+            /*
             Vector3 position = player._maingameObject.transform.position;
-            Quaternion rotation = player._maingameObject.transform.rotation;
-
+            Quaternion rotation = player._maingameObject.transform.rotation;*/
+            Vector3 position = player._maingameObject.GetComponent<PlayerController>().transform.position;
+            Quaternion rotation = player._maingameObject.GetComponent<PlayerController>().transform.rotation;
             transformData.Put((int)PacketType.ServerState);
             transformData.Put(player._id);
             transformData.Put(player._lastProcessedInput);
@@ -170,7 +204,7 @@ public class NetworkManagerServer : MonoBehaviour, INetEventListener
             transformData.Put(rotation.y);
             transformData.Put(rotation.z);
             transformData.Put(rotation.w);
-            //Debug.Log($" New Position :({position.x}, {position.y}, {position.z})");
+          //  Debug.Log($" New Rotation :({rotation.x}, {rotation.x}, {rotation.z}, {rotation.w})");
             SendToAllClients(transformData);
 
             //$$$$$$$
@@ -244,8 +278,8 @@ public class NetworkManagerServer : MonoBehaviour, INetEventListener
 
             _spawnwriter.Put((int)PacketType.Spawn);
             spawnPacket.PlayerId = player._id;
-            spawnPacket.Position = player._maingameObject.transform.position;
-            spawnPacket.Rotation = player._maingameObject.transform.rotation;
+            spawnPacket.Position = player._maingameObject.GetComponent<PlayerController>().transform.position;// player._maingameObject.transform.position;
+            spawnPacket.Rotation = player._maingameObject.GetComponent<PlayerController>().transform.rotation;// player._maingameObject.transform.rotation;
             spawnPacket.Albedo = player._maingameObject.transform.GetChild(1).GetComponent<Renderer>().material.color;
             spawnPacket.Serialize(_spawnwriter);
             SendToAllClients(_spawnwriter);
@@ -262,7 +296,10 @@ public class NetworkManagerServer : MonoBehaviour, INetEventListener
         ServerPlayer serverPlayer = _serverPlayers.Find(player => player._id == peer.Id);
         if (serverPlayer != null) { Debug.LogError("Should never happen :::::::: !"); return; }
 
-        Vector3 position = RandomPosition();
+        /*Vector3 position = RandomPosition();
+        Color color = RandomColor();*/
+
+        Vector3 position = new Vector3(0, 1.8f, 0);
         Color color = RandomColor();
 
         serverPlayer = new ServerPlayer(peer.Id, peer, Instantiate(playerPrefab, position, Quaternion.identity));
@@ -298,6 +335,9 @@ public class NetworkManagerServer : MonoBehaviour, INetEventListener
         leavePacket.Put(peer.Id);
         SendToAllClients(leavePacket);
         Debug.LogFormat("[SERVER] Peer : {0} disconnected : {0} there are {0} players remaining", peer.Id, disconnectInfo.Reason, _serverPlayers.Count);
+        Debug.Log($"Total Number of Received Packets : {packetReceived}");
+        Debug.Log($"Total Number of Applied Packets : {packetProcessed}");
+
     }
 
     public void OnNetworkError(IPEndPoint endPoint, SocketError socketError)
@@ -353,6 +393,9 @@ public class NetworkManagerServer : MonoBehaviour, INetEventListener
                     pendingInput.nInput.MouseX = reader.GetFloat();
                     pendingInput.nInput.MouseY = reader.GetFloat();
                     UpdateClientInputPendingList(senderPeerId, pendingInput);
+                    packetReceived++;
+                //    Debug.Log($"Received The Input inputX : {pendingInput.nInput.InputX} inputY : {pendingInput.nInput.InputY} mouseX : {pendingInput.nInput.MouseX} mouseY {pendingInput.nInput.MouseY} nTime {pendingInput.nTime} ");
+
                 }
                 break;
             case PacketType.RPC:
@@ -400,8 +443,8 @@ public class NetworkManagerServer : MonoBehaviour, INetEventListener
 
     public void OnConnectionRequest(ConnectionRequest request)
     {
-        if (_server.PeersCount < MAX_CONNECTION)
-            request.AcceptIfKey(CONNECTION_KEY);
+        if (_server.PeersCount < AuthServer.MAX_CONNECTION)
+            request.AcceptIfKey(AuthServer.CONNECTION_KEY);
         else
             request.Reject();
     }

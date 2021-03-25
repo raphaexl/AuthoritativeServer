@@ -30,9 +30,9 @@ public class ClientUIController : MonoBehaviour
 
     private void Start()
     {
-        toogleGameObject.transform.GetChild(0).GetComponent<Toggle>().isOn = false;
+        /*toogleGameObject.transform.GetChild(0).GetComponent<Toggle>().isOn = false;
         toogleGameObject.transform.GetChild(1).GetComponent<Toggle>().isOn = false;
-        toogleGameObject.transform.GetChild(2).GetComponent<Toggle>().isOn = false;
+        toogleGameObject.transform.GetChild(2).GetComponent<Toggle>().isOn = false;*/
     }
 
     public  void OnClientSidePredictionValueChanged(bool value)

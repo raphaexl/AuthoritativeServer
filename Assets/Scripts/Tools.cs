@@ -27,6 +27,18 @@ public struct RPCParametersTypes
     public const char STRING    = (char)12;
 }
 
+public struct AuthServer
+{
+    public const string CONNECTION_KEY = "KEYOFCONNCETION";
+    public const int MAX_CONNECTION = 10;
+    public const float SERVER_UPDATE_RATE = 30f;
+    public const float GAME_FPS = 50f;
+    public const string SERVER_URL = "localhost";
+    public const int SERVER_PORT = 9050;
+    public const int CLIENT_PORT = 9050;
+    public const int CLIENT_SLEEP_TIME = 15;
+}
+
 public class Tools
 {
 
