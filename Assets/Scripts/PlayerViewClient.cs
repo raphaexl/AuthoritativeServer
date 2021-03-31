@@ -35,6 +35,8 @@ public class PlayerViewClient : MonoBehaviour
     Vector3 _Position;
     Quaternion _Rotation;
 
+    public bool isReady { get; set; }
+
     public bool isMine { get; set; }
     public int Id {
         get { return _id; }
@@ -45,19 +47,36 @@ public class PlayerViewClient : MonoBehaviour
     {
         isMine = _isLocalPlayer;
         GetComponent<Player>().IsLocalPlayer = _isLocalPlayer;
+
         if (!_isLocalPlayer)
         {
             //Disable the camera of the enemy
             transform.GetChild(0).gameObject.GetComponent<Camera>().gameObject.SetActive(false);
             StateBuffers = new List<StateBuffer>();
         }
+      
     }
 
-    public void Spawn(bool isLocalPlayer, int id, Vector3 pos, Quaternion rot, Color color)
+    public void Spawn(bool isLocalPlayer, int id, Vector3 pos, Quaternion rot, Color color, Transform camTrans)
     {
         Id = id;
-        GetComponent<PlayerController>().ApplyTransform(pos, rot);
-        transform.GetChild(1).GetComponent<MeshRenderer>().material.color = color;
+        GetComponent<PlayerController>().SetState(pos, rot, 0f);
+        if (isLocalPlayer)
+        {
+            Vector3 pos_ = GetComponent<PlayerController>().cameraTrans.position;
+            Quaternion rot_ = GetComponent<PlayerController>().cameraTrans.rotation;
+            if (pos_ == camTrans.position && rot_ == camTrans.rotation)
+            {
+                Debug.Log("Everything is Fine");
+            }
+            else
+            {
+                Debug.Log($"Position : ({pos_.x}, {pos_.y}, {pos_.z}) vs Server Position : ({camTrans.position.x}, {camTrans.position.y}, {camTrans.position.z}) ");
+                Debug.Log($"Rotation : ({rot_.x}, {rot_.y}, {rot_.z}) vs Server Rotation : ({camTrans.rotation.x}, {camTrans.rotation.y}, {camTrans.rotation.z}, {camTrans.rotation.w}) ");
+               // GetComponent<PlayerController>().cameraTrans = camTrans;
+            }
+        }
+       // transform.GetChild(1).GetComponent<MeshRenderer>().material.color = color;
         SpecialChecks(isLocalPlayer);
         Client.Instance.AddPlayerView(this);
     }
@@ -77,10 +96,10 @@ public class PlayerViewClient : MonoBehaviour
         Client.Instance.setPlayerInputs(nInput);
     }
 
-    public void SetTransform(Vector3 pos, Quaternion quaternion)
+    public void ApplyServerState(Vector3 pos, Quaternion quaternion, float _animSpeed)
     {
         if (!isMine) { quaternion.eulerAngles = new Vector3(quaternion.eulerAngles.x, -quaternion.eulerAngles.y, quaternion.eulerAngles.z); }
-        GetComponent<PlayerController>().ApplyTransform(pos, quaternion);
+        GetComponent<PlayerController>().SetState(pos, quaternion, _animSpeed);
     }
 
     public void Move(Tools.NInput nInput, float fpsTick)
@@ -116,7 +135,8 @@ public class PlayerViewClient : MonoBehaviour
          _playerInput.MouseY = Input.GetAxis("Mouse Y");*/
         _playerInput.InputX = Input.GetAxisRaw("Horizontal");
         _playerInput.InputY = Input.GetAxisRaw("Vertical");
-        _playerInput.Jump = Input.GetButtonDown("Jump");
+        _playerInput.Jump = Input.GetKey(KeyCode.Space);
+        _playerInput.Run = Input.GetKey(KeyCode.LeftShift);
         _playerInput.MouseX = Input.GetAxis("Mouse X");
         _playerInput.MouseY = Input.GetAxis("Mouse Y");
 

@@ -7,6 +7,7 @@ public enum PacketType
     Join,
     Spawn,
     Leave,
+    CameraSetup,
     Movement,
     ServerState,
     RPC,
@@ -43,13 +44,75 @@ public struct InputPacket : INetSerializable
 }
 
 
-public struct PlayerState : INetSerializable
+public struct PlayerStatePacket : INetSerializable
 {
     PacketType type;
     public int Id;
+    public int lastProcessedInput;
     public Vector3 Position;
     public Quaternion Rotation;
+    public float AnimSpeed;
 
+
+    public void Deserialize(NetDataReader reader)
+    {
+        Id = reader.GetInt();
+        lastProcessedInput = reader.GetInt();
+        Position.x = reader.GetFloat();
+        Position.y = reader.GetFloat();
+        Position.z = reader.GetFloat();
+        Rotation.x = reader.GetFloat();
+        Rotation.y = reader.GetFloat();
+        Rotation.z = reader.GetFloat();
+        Rotation.w = reader.GetFloat();
+        AnimSpeed = reader.GetFloat();
+    }
+
+    public void Serialize(NetDataWriter writer)
+    {
+        writer.Put(Id);
+        writer.Put(lastProcessedInput);
+        writer.Put(Position.x);
+        writer.Put(Position.y);
+        writer.Put(Position.z);
+        writer.Put(Rotation.x);
+        writer.Put(Rotation.y);
+        writer.Put(Rotation.z);
+        writer.Put(Rotation.w);
+        writer.Put(AnimSpeed);
+    }
+}
+
+public class JoinPacket
+{
+    public string UserName { get; set; }
+}
+
+public class JoinAcceptPacket
+{
+    public int  Id { get; set; }
+    public int  ServerTick { get; set; }
+}
+
+public class PlayerJoinedPacket
+{
+    public string UserName { get; set; }
+    public bool NewPlayer { get; set; }
+    public byte Health { get; set; }
+    public ushort ServerTick { get; set; }
+    public PlayerStatePacket InitialPlayerState { get; set; }
+}
+
+public class PlayerLeavedPacket
+{
+    public byte Id { get; set; }
+}
+
+public struct CameraSetupPacket : INetSerializable
+{
+    public int Id;
+    public Vector3 Position;
+    public Quaternion Rotation;
 
     public void Deserialize(NetDataReader reader)
     {
@@ -76,31 +139,6 @@ public struct PlayerState : INetSerializable
     }
 }
 
-public class JoinPacket
-{
-    public string UserName { get; set; }
-}
-
-public class JoinAcceptPacket
-{
-    public int  Id { get; set; }
-    public int  ServerTick { get; set; }
-}
-
-public class PlayerJoinedPacket
-{
-    public string UserName { get; set; }
-    public bool NewPlayer { get; set; }
-    public byte Health { get; set; }
-    public ushort ServerTick { get; set; }
-    public PlayerState InitialPlayerState { get; set; }
-}
-
-public class PlayerLeavedPacket
-{
-    public byte Id { get; set; }
-}
-
 //Manual serializable packets
 public struct SpawnPacket : INetSerializable
 {
@@ -108,6 +146,9 @@ public struct SpawnPacket : INetSerializable
     public Vector3 Position;
     public Quaternion Rotation;
     public Color Albedo;
+
+    public Vector3 CameraPosition;
+    public Quaternion CameraRotation;
 
     public void Serialize(NetDataWriter writer)
     {
@@ -122,6 +163,13 @@ public struct SpawnPacket : INetSerializable
         writer.Put(Albedo.r);
         writer.Put(Albedo.g);
         writer.Put(Albedo.b);
+        writer.Put(CameraPosition.x);
+        writer.Put(CameraPosition.y);
+        writer.Put(CameraPosition.z);
+        writer.Put(CameraRotation.x);
+        writer.Put(CameraRotation.y);
+        writer.Put(CameraRotation.z);
+        writer.Put(CameraRotation.w);
     }
 
     public void Deserialize(NetDataReader reader)
@@ -137,6 +185,13 @@ public struct SpawnPacket : INetSerializable
         Albedo.r = reader.GetFloat();
         Albedo.g = reader.GetFloat();
         Albedo.b = reader.GetFloat();
+        CameraPosition.x = reader.GetFloat();
+        CameraPosition.y = reader.GetFloat();
+        CameraPosition.z = reader.GetFloat();
+        CameraRotation.x = reader.GetFloat();
+        CameraRotation.y = reader.GetFloat();
+        CameraRotation.z = reader.GetFloat();
+        CameraRotation.w = reader.GetFloat();
     }
 }
 

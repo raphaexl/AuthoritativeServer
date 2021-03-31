@@ -50,6 +50,7 @@ public class Tools
         public float InputX { get; set; }
         public float InputY { get; set; }
         public bool Jump { get; set; }
+        public bool Run { get; set; }
 
         public override bool Equals(object obj)
         {
@@ -64,6 +65,7 @@ public class Tools
             (this.InputX == nInput.InputX
                 && this.InputY == nInput.InputY
                 && this.Jump == nInput.Jump
+                && this.Run == nInput.Run
                 && this.MouseX == nInput.MouseX
                 && this.MouseY == nInput.MouseY);
 
