@@ -31,6 +31,6 @@ public class Player : MonoBehaviour
 
     private void Update()
     {
-        playerType = _isLocalPlayer ? "Player" : "Enemy";
+        playerType = _isLocalPlayer ? $"Player Id : {ID}" : $"Enemy Id : {ID}";
     }
 }

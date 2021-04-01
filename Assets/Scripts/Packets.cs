@@ -46,11 +46,13 @@ public struct InputPacket : INetSerializable
 
 public struct PlayerStatePacket : INetSerializable
 {
-    PacketType type;
+    //PacketType type;
     public int Id;
     public int lastProcessedInput;
     public Vector3 Position;
     public Quaternion Rotation;
+    public Vector3 camPosition;
+    public Quaternion camRotation;
     public float AnimSpeed;
 
 
@@ -66,6 +68,13 @@ public struct PlayerStatePacket : INetSerializable
         Rotation.z = reader.GetFloat();
         Rotation.w = reader.GetFloat();
         AnimSpeed = reader.GetFloat();
+        camPosition.x = reader.GetFloat();
+        camPosition.y = reader.GetFloat();
+        camPosition.z = reader.GetFloat();
+        camRotation.x = reader.GetFloat();
+        camRotation.y = reader.GetFloat();
+        camRotation.z = reader.GetFloat();
+        camRotation.w = reader.GetFloat();
     }
 
     public void Serialize(NetDataWriter writer)
@@ -80,6 +89,13 @@ public struct PlayerStatePacket : INetSerializable
         writer.Put(Rotation.z);
         writer.Put(Rotation.w);
         writer.Put(AnimSpeed);
+        writer.Put(camPosition.x);
+        writer.Put(camPosition.y);
+        writer.Put(camPosition.z);
+        writer.Put(camRotation.x);
+        writer.Put(camRotation.y);
+        writer.Put(camRotation.z);
+        writer.Put(camRotation.w);
     }
 }
 

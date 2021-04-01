@@ -18,6 +18,9 @@ public class StateBuffer
 {
     public Vector3 Position;
     public Quaternion Rotation;
+    public Vector3 CamPosition;
+    public Quaternion CamRotation;
+    public float AnimSpeed;
     public float Timestamp;
 
     public override string ToString()
@@ -27,9 +30,9 @@ public class StateBuffer
 }
 public class PlayerViewClient : MonoBehaviour
 {
-    int                             _id;
-    Tools.NInput                    _playerInput;
-    List<MonoBehaviour>             _rpcMonoBehaviours;
+    private int                             _id;
+    private Tools.NInput                    _playerInput;
+    private List<MonoBehaviour>             _rpcMonoBehaviours;
     public List<StateBuffer>        StateBuffers;
 
     Vector3 _Position;
@@ -47,11 +50,10 @@ public class PlayerViewClient : MonoBehaviour
     {
         isMine = _isLocalPlayer;
         GetComponent<Player>().IsLocalPlayer = _isLocalPlayer;
-
         if (!_isLocalPlayer)
         {
             //Disable the camera of the enemy
-            transform.GetChild(0).gameObject.GetComponent<Camera>().gameObject.SetActive(false);
+            //transform.GetChild(0).gameObject.GetComponent<Camera>().gameObject.SetActive(false);
             StateBuffers = new List<StateBuffer>();
         }
       
@@ -60,9 +62,10 @@ public class PlayerViewClient : MonoBehaviour
     public void Spawn(bool isLocalPlayer, int id, Vector3 pos, Quaternion rot, Color color, Transform camTrans)
     {
         Id = id;
-        GetComponent<PlayerController>().SetState(pos, rot, 0f);
+        GetComponent<PlayerController>().SetState(pos, rot, 0f, camTrans.position, camTrans.rotation);
         if (isLocalPlayer)
         {
+            GetComponent<PlayerController>().cameraTrans = Camera.main.transform;
             Vector3 pos_ = GetComponent<PlayerController>().cameraTrans.position;
             Quaternion rot_ = GetComponent<PlayerController>().cameraTrans.rotation;
             if (pos_ == camTrans.position && rot_ == camTrans.rotation)
@@ -72,12 +75,18 @@ public class PlayerViewClient : MonoBehaviour
             else
             {
                 Debug.Log($"Position : ({pos_.x}, {pos_.y}, {pos_.z}) vs Server Position : ({camTrans.position.x}, {camTrans.position.y}, {camTrans.position.z}) ");
-                Debug.Log($"Rotation : ({rot_.x}, {rot_.y}, {rot_.z}) vs Server Rotation : ({camTrans.rotation.x}, {camTrans.rotation.y}, {camTrans.rotation.z}, {camTrans.rotation.w}) ");
+                Debug.Log($"Rotation : ({rot_.x}, {rot_.y}, {rot_.z}, {rot_.z}) vs Server Rotation : ({camTrans.rotation.x}, {camTrans.rotation.y}, {camTrans.rotation.z}, {camTrans.rotation.w}) ");
                // GetComponent<PlayerController>().cameraTrans = camTrans;
             }
         }
-       // transform.GetChild(1).GetComponent<MeshRenderer>().material.color = color;
+        else
+        {
+            GetComponent<PlayerController>().cameraTrans = camTrans;
+            Debug.Log("The transform is not Camera Transform");
+        }
+        transform.GetChild(1).GetComponent<Renderer>().material.color = color; //SkinnMeshRenderer to be precise
         SpecialChecks(isLocalPlayer);
+        GetComponent<PlayerController>().isReady = true;
         Client.Instance.AddPlayerView(this);
     }
 
@@ -85,6 +94,8 @@ public class PlayerViewClient : MonoBehaviour
     {
         //ReceiveRPC("openDoor");
         //ReceiveRPC("dropLife", 5);
+        //isMine = false;
+        //isReady = false;
         _playerInput = new Tools.NInput();
         _rpcMonoBehaviours = new List<MonoBehaviour>();
         RefreshMonoBehaviours();
@@ -96,10 +107,10 @@ public class PlayerViewClient : MonoBehaviour
         Client.Instance.setPlayerInputs(nInput);
     }
 
-    public void ApplyServerState(Vector3 pos, Quaternion quaternion, float _animSpeed)
+    public void ApplyServerState(Vector3 pos, Quaternion quaternion, float _animSpeed, Vector3 camPos, Quaternion camRot)
     {
         if (!isMine) { quaternion.eulerAngles = new Vector3(quaternion.eulerAngles.x, -quaternion.eulerAngles.y, quaternion.eulerAngles.z); }
-        GetComponent<PlayerController>().SetState(pos, quaternion, _animSpeed);
+        GetComponent<PlayerController>().SetState(pos, quaternion, _animSpeed, camPos, camRot);
     }
 
     public void Move(Tools.NInput nInput, float fpsTick)
@@ -113,6 +124,7 @@ public class PlayerViewClient : MonoBehaviour
 
     private void Update()
     {
+        if (!isReady) { return; }
        if (!isMine) {
             if (!Client.Instance.interpolation) { return; }
             processInterpolations();
@@ -295,6 +307,12 @@ public class PlayerViewClient : MonoBehaviour
         return new Quaternion(Result.x, Result.y, Result.z, Result.w);
     }
     #endregion
+
+    private void OnDestroy()
+    {
+        Destroy(gameObject);
+        Destroy(this);
+    }
 
     /*
     void UpdateEntitiesInterpolationState()

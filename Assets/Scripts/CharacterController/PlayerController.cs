@@ -37,10 +37,13 @@ public class PlayerController : MonoBehaviourRPC
     bool running = false;
     float moveSmoothTime = 0.12f;
 
+
+
     /*
      *  Properties */
 
     //public bool OrbitControls { get; set; } // False for Any Player except Local Player
+    public bool isReady { get; set; }
     public Transform cameraTrans { get; set; }
     public float animSpeed { get; set; }
 
@@ -49,7 +52,8 @@ public class PlayerController : MonoBehaviourRPC
     {
         animator = GetComponent<Animator>();
         controller = GetComponent<CharacterController>();
-        cameraTrans = Camera.main.transform;
+        //cameraTrans = Camera.main.transform;
+        speedHashCode = Animator.StringToHash("Speed");
     }
 
     void Start()
@@ -57,7 +61,6 @@ public class PlayerController : MonoBehaviourRPC
         yaw = 0;
         pitch = 0;
         targetRotation = Vector3.zero;
-        speedHashCode = Animator.StringToHash("Speed");
     }
 
     void  LateCameraUpdatePosition()
@@ -78,8 +81,9 @@ public class PlayerController : MonoBehaviourRPC
     public void ApplyInput(Tools.NInput nInput, float fpsTick)
     {
         if (!controller) { return; }
+        if (!isReady) { return; }
 
-        
+
         isGrounded = Physics.CheckSphere(groundChecker.transform.position, groundCheckRadius, groundMask);
         running = nInput.Run;
 
@@ -89,12 +93,11 @@ public class PlayerController : MonoBehaviourRPC
         {Jump();}
         Vector2 inputDir = new Vector2(nInput.InputX, nInput.InputY).normalized;
         Move(inputDir, running, fpsTick);
-
-
-        animSpeed = (running) ? currentSpeed / runSpeed : currentSpeed / walkSpeed * 0.5f;
-       // animator.SetFloat(speedHashCode, animSpeed, moveSmoothTime, fpsTick);
-        animator.SetFloat(speedHashCode, animSpeed);
-        //        animator.SetFloat(speedHashCode, animSpeed, moveSmoothTime, Time.deltaTime);
+        //animSpeed = (running) ? currentSpeed / runSpeed : (currentSpeed / walkSpeed) * 0.5f;
+        animSpeed = ((running) ? 1.0f :  0.5f) * inputDir.magnitude;
+        // animator.SetFloat(speedHashCode, animSpeed, moveSmoothTime, fpsTick);
+         animator.SetFloat(speedHashCode, animSpeed);
+      //  animator.SetFloat(speedHashCode, animSpeed, moveSmoothTime, Time.deltaTime);
         LateCameraUpdate(nInput);
     }
 
@@ -110,8 +113,8 @@ public class PlayerController : MonoBehaviourRPC
         Vector3 move = transform.forward * currentSpeed + velocityY * Vector3.up;
         controller.Move(move * fpsTick);
       //  Debug.Log($"Before Current Speed : {currentSpeed}");
-        currentSpeed = new Vector2(controller.velocity.x, controller.velocity.z). magnitude;
-    //    Debug.Log($"After Current Speed : {currentSpeed}");
+        currentSpeed = new Vector2(controller.velocity.x, controller.velocity.z).magnitude;
+      //  Debug.Log($"After Current Speed : {currentSpeed}");
         velocityY += gravity * fpsTick;
     }
 
@@ -124,52 +127,35 @@ public class PlayerController : MonoBehaviourRPC
        
     }
     float prevAnim = -1f;
-    float _prevt = -1f;
-    float _nowt = 1f;
+    float _prevt = 0f;
+    float _nowt = 0f;
     float _currTime = 0f;
 
-    Vector3 _prevPos = new Vector3();
-    Vector3 _currPos = new Vector3();
-
-    public void SetState(Vector3 position, Quaternion rotation, float _animSpeed)
+    public void SetState(Vector3 position, Quaternion rotation, float _animSpeed, Vector3 camPos, Quaternion camRot)
     {
-        Debug.Log("Server State");
+        if (!isReady) { return; }
 
-        //Debug.Log($"Current Position : ({transform.position.x}, {transform.position.y}, {transform.position.z}) Rotation : ({transform.rotation.x}, {transform.rotation.y}, {transform.rotation.z})");
-        //Debug.Log($"Authorative Position : ({position.x}, {position.y}, {position.z}) Rotation : ({rotation.x}, {rotation.y}, {rotation.z})");
         if (prevAnim < 0f)
         {
             _prevt = 0f;// Time.timeSinceLevelLoad;
             prevAnim = _animSpeed;
-           // _prevPos = position;
             Debug.Log("Always True");
         }
        // _nowt = Time.timeSinceLevelLoad;
         _nowt = Time.time;
         _currTime += Time.deltaTime;
         float dt_sec = _nowt - _prevt;
-        float _moveSpeed = (position - _prevPos).magnitude;//  * (_nowt - _prevt);
-        float __moveSpeed = Vector3.Distance(position, _prevPos);// (_nowt - _prevt);
-        Debug.Log($"magnitute _move speed : {_moveSpeed} distance __move speed : {__moveSpeed} : dt_sec {dt_sec}");
-        //animator.SetFloat(speedHashCode, _moveSpeed);
-        //float speedAnimator = _moveSpeed > walkSpeed ? _moveSpeed / runSpeed : (_moveSpeed / walkSpeed) * 0.5f;
-        // animator.SetFloat(speedHashCode,  __moveSpeed, moveSmoothTime, Time.deltaTime);
-        // animator.SetFloat(speedHashCode, _moveSpeed);
-        //  Debug.Log($"_move Speed Calculated : {_moveSpeed}, speedAnimator : {speedAnimator}, dt = {1.0f / (_nowt - _prevt)}");
-        //animator.SetFloat(speedHashCode, speedAnimator, Mathf.Lerp(prevAnim, _animSpeed, _currTime / (_nowt - _prevt)), Time.deltaTime);
-        // speedAnim = 0;
-        /* float speedAnim = Vector3.Distance(position.normalized, _prevPos.normalized)/ (_nowt - _prevt);
-         Debug.Log($"nowt : {_nowt} prevt ; {_prevt} anim speed : {speedAnim}");
-         Debug.Log($"Controller Velocity : {controller.velocity}");*/
-      //  animator.SetFloat(speedHashCode,  _animSpeed, Mathf.Lerp(prevAnim, _animSpeed, _currTime / (_nowt - _prevt)), Time.deltaTime);
-        animator.SetFloat(speedHashCode, _animSpeed, moveSmoothTime, Time.deltaTime);
+
+     //   animator.SetFloat(speedHashCode, Mathf.Lerp(prevAnim, _animSpeed, _currTime / (_nowt - _prevt)), moveSmoothTime, Time.deltaTime);
+        //animator.SetFloat(speedHashCode, _animSpeed, moveSmoothTime, Time.deltaTime);
         transform.position = position;
         transform.rotation = rotation;
-       // animator.SetFloat(speedHashCode, _animSpeed);
-        LateCameraUpdatePosition();
+        cameraTrans.position = camPos;
+        cameraTrans.rotation = camRot;
+        animator.SetFloat(speedHashCode, _animSpeed);
+        //LateCameraUpdatePosition();
         prevAnim = _animSpeed;
         _prevt = _nowt;
-        _prevPos = position;
     }
 
     private void Update()
@@ -182,6 +168,13 @@ public class PlayerController : MonoBehaviourRPC
         nInput.MouseY = Input.GetAxis("Mouse Y");
 
         ApplyInput(nInput, 0.02f);*/
+        if (!isReady) { return; }
         Debug.DrawRay(transform.position, transform.forward * 20f);
+    }
+
+    private void OnDestroy()
+    {
+        Destroy(gameObject);
+        Destroy(this);
     }
 }
