@@ -31,12 +31,14 @@ public struct AuthServer
 {
     public const string CONNECTION_KEY = "KEYOFCONNCETION";
     public const int MAX_CONNECTION = 10;
-    public const float SERVER_UPDATE_RATE = 30f;
+    public const float SERVER_UPDATE_RATE = .03f;
     public const float GAME_FPS = 50f;
     public const string SERVER_URL = "localhost";
     public const int SERVER_PORT = 9050;
     public const int CLIENT_PORT = 9050;
     public const int CLIENT_SLEEP_TIME = 15;
+
+    public const int STATE_BUFFER_SIZE = 1024;
 }
 
 public class Tools

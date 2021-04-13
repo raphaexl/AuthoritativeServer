@@ -1,5 +1,4 @@
 ﻿using UnityEngine;
-using LiteNetLib;
 using LiteNetLib.Utils;
 
 public enum PacketType
@@ -16,30 +15,41 @@ public enum PacketType
 public struct InputPacket : INetSerializable
 {
     public  int Id;
-    public  float mouseX;
-    public  float mouseY;
-    public  float inputX;
-    public  float inputY;
-    public  bool jump;
+    public  float MouseX;
+    public  float MouseY;
+    public  float InputX;
+    public  float InputY;
+    public  bool Jump;
+    public  bool Run;
+    public int SequenceNumber;
+    public float NTime;
+
 
     public void Deserialize(NetDataReader reader)
     {
         Id = reader.GetInt();
-        mouseX = reader.GetFloat();
-        mouseY = reader.GetFloat();
-        inputX = reader.GetFloat();
-        inputY = reader.GetFloat();
-        
+        SequenceNumber = reader.GetInt();
+        NTime = reader.GetFloat();
+        MouseX = reader.GetFloat();
+        MouseY = reader.GetFloat();
+        InputX = reader.GetFloat();
+        InputY = reader.GetFloat();
+        Jump = reader.GetBool();
+        Run = reader.GetBool();
+
     }
 
     public void Serialize(NetDataWriter writer)
     {
         writer.Put(Id);
-        writer.Put(mouseX);
-        writer.Put(mouseY);
-        writer.Put(inputX);
-        writer.Put(inputY);
-        writer.Put(jump);
+        writer.Put(SequenceNumber);
+        writer.Put(NTime);
+        writer.Put(MouseX);
+        writer.Put(MouseY);
+        writer.Put(InputX);
+        writer.Put(InputY);
+        writer.Put(Jump);
+        writer.Put(Run);
     }
 }
 

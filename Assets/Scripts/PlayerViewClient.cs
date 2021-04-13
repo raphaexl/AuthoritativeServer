@@ -35,9 +35,6 @@ public class PlayerViewClient : MonoBehaviour
     private List<MonoBehaviour>             _rpcMonoBehaviours;
     public List<StateBuffer>        StateBuffers;
 
-    Vector3 _Position;
-    Quaternion _Rotation;
-
     public bool isReady { get; set; }
 
     public bool isMine { get; set; }
@@ -52,38 +49,22 @@ public class PlayerViewClient : MonoBehaviour
         GetComponent<Player>().IsLocalPlayer = _isLocalPlayer;
         if (!_isLocalPlayer)
         {
-            //Disable the camera of the enemy
-            //transform.GetChild(0).gameObject.GetComponent<Camera>().gameObject.SetActive(false);
             StateBuffers = new List<StateBuffer>();
         }
-      
     }
 
     public void Spawn(bool isLocalPlayer, int id, Vector3 pos, Quaternion rot, Color color, Transform camTrans)
     {
         Id = id;
-        GetComponent<PlayerController>().SetState(pos, rot, 0f, camTrans.position, camTrans.rotation);
         if (isLocalPlayer)
         {
             GetComponent<PlayerController>().cameraTrans = Camera.main.transform;
-            Vector3 pos_ = GetComponent<PlayerController>().cameraTrans.position;
-            Quaternion rot_ = GetComponent<PlayerController>().cameraTrans.rotation;
-            if (pos_ == camTrans.position && rot_ == camTrans.rotation)
-            {
-                Debug.Log("Everything is Fine");
-            }
-            else
-            {
-                Debug.Log($"Position : ({pos_.x}, {pos_.y}, {pos_.z}) vs Server Position : ({camTrans.position.x}, {camTrans.position.y}, {camTrans.position.z}) ");
-                Debug.Log($"Rotation : ({rot_.x}, {rot_.y}, {rot_.z}, {rot_.z}) vs Server Rotation : ({camTrans.rotation.x}, {camTrans.rotation.y}, {camTrans.rotation.z}, {camTrans.rotation.w}) ");
-               // GetComponent<PlayerController>().cameraTrans = camTrans;
-            }
         }
         else
         {
             GetComponent<PlayerController>().cameraTrans = camTrans;
-            Debug.Log("The transform is not Camera Transform");
         }
+        GetComponent<PlayerController>().Spawn(pos, rot, camTrans.position, camTrans.rotation);
         transform.GetChild(1).GetComponent<Renderer>().material.color = color; //SkinnMeshRenderer to be precise
         SpecialChecks(isLocalPlayer);
         GetComponent<PlayerController>().isReady = true;
@@ -92,10 +73,6 @@ public class PlayerViewClient : MonoBehaviour
 
     private void Start()
     {
-        //ReceiveRPC("openDoor");
-        //ReceiveRPC("dropLife", 5);
-        //isMine = false;
-        //isReady = false;
         _playerInput = new Tools.NInput();
         _rpcMonoBehaviours = new List<MonoBehaviour>();
         RefreshMonoBehaviours();
@@ -140,17 +117,12 @@ public class PlayerViewClient : MonoBehaviour
     #region INPUT
     void UpdatePlayerInput()
     {
-        /* _playerInput.InputX = Input.GetAxis("Horizontal");
-         _playerInput.InputY = Input.GetAxis("Vertical");
-         _playerInput.Jump = Input.GetButtonDown("Jump");
-         _playerInput.MouseX = Input.GetAxis("Mouse X");
-         _playerInput.MouseY = Input.GetAxis("Mouse Y");*/
         _playerInput.InputX = Input.GetAxisRaw("Horizontal");
         _playerInput.InputY = Input.GetAxisRaw("Vertical");
         _playerInput.Jump = Input.GetKey(KeyCode.Space);
         _playerInput.Run = Input.GetKey(KeyCode.LeftShift);
         _playerInput.MouseX = Input.GetAxis("Mouse X");
-        _playerInput.MouseY = Input.GetAxis("Mouse Y");
+        _playerInput.MouseY =  Input.GetAxis("Mouse Y");
 
         UpdateInput(_playerInput);
     }
@@ -313,34 +285,4 @@ public class PlayerViewClient : MonoBehaviour
         Destroy(gameObject);
         Destroy(this);
     }
-
-    /*
-    void UpdateEntitiesInterpolationState()
-    {
-        _remotePlayers.ForEach(remotePlayer =>
-        {
-            List<StateBuffer> stateBuffersToRemove = new List<StateBuffer>();
-            for (int i = 0; i < remotePlayer.StateBuffers.Count - 2; i++)
-            {
-                if (remotePlayer.StateBuffers[i].InterpolationCompleted)
-                {
-                    stateBuffersToRemove.Add(remotePlayer.StateBuffers[i]);
-                    Debug.Log($"Interpolation completed For : stabteBuffer {i}");
-                }
-                else
-                {
-                    //       Debug.Log($"Interpolation Not completed For : stabteBuffer {i}");
-                }
-            }
-            stateBuffersToRemove.ForEach(stateBuffer =>
-            {
-                remotePlayer.StateBuffers.Remove(stateBuffer);
-                Debug.Log("Something removed");
-
-            });
-            Debug.Log($"State Buffer Size Before : {remotePlayer.StateBuffers.Count} : To Remove : {stateBuffersToRemove.Count}");
-            stateBuffersToRemove.Clear();
-            Debug.Log($"State Buffer Size After : {remotePlayer.StateBuffers.Count} : To Remove : {stateBuffersToRemove.Count}");
-        });
-    }*/
 }

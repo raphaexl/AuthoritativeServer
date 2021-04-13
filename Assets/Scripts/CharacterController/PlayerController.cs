@@ -52,7 +52,6 @@ public class PlayerController : MonoBehaviourRPC
     {
         animator = GetComponent<Animator>();
         controller = GetComponent<CharacterController>();
-        //cameraTrans = Camera.main.transform;
         speedHashCode = Animator.StringToHash("Speed");
     }
 
@@ -111,8 +110,9 @@ public class PlayerController : MonoBehaviourRPC
         float targetSpeed = ((running) ? runSpeed : walkSpeed) * inputDir.magnitude;
         currentSpeed = targetSpeed; 
         Vector3 move = transform.forward * currentSpeed + velocityY * Vector3.up;
+        // transform.Translate(move * fpsTick);
         controller.Move(move * fpsTick);
-      //  Debug.Log($"Before Current Speed : {currentSpeed}");
+        //  Debug.Log($"Before Current Speed : {currentSpeed}");
         currentSpeed = new Vector2(controller.velocity.x, controller.velocity.z).magnitude;
       //  Debug.Log($"After Current Speed : {currentSpeed}");
         velocityY += gravity * fpsTick;
@@ -131,8 +131,17 @@ public class PlayerController : MonoBehaviourRPC
     float _nowt = 0f;
     float _currTime = 0f;
 
+    public void Spawn(Vector3 position, Quaternion rotation, Vector3 camPos, Quaternion camRot)
+    {
+        transform.position = position;
+        transform.rotation = rotation;
+        cameraTrans.position = camPos;
+        cameraTrans.rotation = camRot;
+    }
+
     public void SetState(Vector3 position, Quaternion rotation, float _animSpeed, Vector3 camPos, Quaternion camRot)
     {
+
         if (!isReady) { return; }
 
         if (prevAnim < 0f)
@@ -160,14 +169,6 @@ public class PlayerController : MonoBehaviourRPC
 
     private void Update()
     {
-        /*Tools.NInput nInput =  new Tools.NInput();
-        nInput.InputX = Input.GetAxisRaw("Horizontal");
-        nInput.InputY = Input.GetAxisRaw("Vertical");
-        nInput.Jump = Input.GetButtonDown("Jump");
-        nInput.MouseX = Input.GetAxis("Mouse X");
-        nInput.MouseY = Input.GetAxis("Mouse Y");
-
-        ApplyInput(nInput, 0.02f);*/
         if (!isReady) { return; }
         Debug.DrawRay(transform.position, transform.forward * 20f);
     }

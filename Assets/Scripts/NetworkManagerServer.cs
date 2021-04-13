@@ -32,8 +32,9 @@ public class ServerPlayer
         _peer = peer;
         _cameraTrans = cameraTrans;
         _maingameObject = _gameObject;
-        _lastProcessedInput = -1000;
+        _lastProcessedInput = -1;
         _clientInput = new List<PendingInput>();
+        //_cameraTrans.SetParent(cameraTrans.gameObject.transform);
         _maingameObject.GetComponent<PlayerController>().cameraTrans = cameraTrans;
        // _maingameObject.transform.GetChild(0).gameObject.GetComponent<Camera>().gameObject.SetActive(false);
     }
@@ -84,6 +85,8 @@ public class NetworkManagerServer : MonoBehaviour, INetEventListener
 
     private CustomFixedUpdate FU_instance;
 
+    private Dictionary<ServerPlayer, Queue<ClientInputState>> clientInputs;
+
 
     private void Awake()
     {
@@ -101,9 +104,9 @@ public class NetworkManagerServer : MonoBehaviour, INetEventListener
         _serverPlayers = new List<ServerPlayer>();
         _rPCPackets = new List<ServerRPCPacket>();
         _clientsCameraTrans = new Dictionary<int, Transform>();
+         FU_instance = new CustomFixedUpdate(1.0f / AuthServer.SERVER_UPDATE_RATE, OnFixedUpdate);
+        clientInputs = new Dictionary<ServerPlayer, Queue<ClientInputState>>();
         Debug.Log($"Server Start at Port {AuthServer.SERVER_PORT}");
-        FU_instance = new CustomFixedUpdate(1.0f / AuthServer.SERVER_UPDATE_RATE, OnFixedUpdate);
-
         //  updateRoutine = StartCoroutine(serverUpdate(AuthServer.SERVER_UPDATE_RATE));
     }
 
@@ -133,6 +136,21 @@ public class NetworkManagerServer : MonoBehaviour, INetEventListener
     // this method will be called AuthServer.SERVER_UPDATE_RATE times per second
     void OnFixedUpdate(float dt)
     {
+        foreach (KeyValuePair<ServerPlayer, Queue<ClientInputState>> entry in clientInputs)
+        {
+            ServerPlayer clientPlayer = entry.Key;
+            Queue<ClientInputState> queue = entry.Value;
+
+            ClientInputState inputState = null;
+            while (queue.Count > 0 && (inputState = queue.Dequeue()) != null)
+            {
+                // Process the input.
+                ProcessClientInputs(clientPlayer, inputState);
+                SimulationState state = ClientCurrentSimulationState(clientPlayer, inputState);
+                NetworkServerSendToClient(clientPlayer, state);
+            }
+        }
+        return;
         processClientsInput();  //Process each client input 
         sendWorldStateToClients(); //sendWorldState to all client
         clearAppliedInputs();
@@ -163,15 +181,13 @@ public class NetworkManagerServer : MonoBehaviour, INetEventListener
         }
         return true;
     }
+
     void ApplyClientPendingInputs(ServerPlayer serverPlayer)
     {
         serverPlayer._clientInput.ForEach(pendingInput =>
         {
             //if (checkInputValidity(pendingInput))
             //{
-                //Apply  client pending Inputs
-             //   Debug.Log("Applying pending Input");
-            //  if (serverPlayer._lastProcessedInput == -1000)
                 {
                     serverPlayer._maingameObject.GetComponent<PlayerController>().ApplyInput(pendingInput.nInput, pendingInput.nTime);
                     serverPlayer._lastProcessedInput = pendingInput.sequenceNumber; // + 1 Just for now
@@ -225,6 +241,7 @@ public class NetworkManagerServer : MonoBehaviour, INetEventListener
             playerState.AnimSpeed = player._maingameObject.GetComponent<PlayerController>().animSpeed;
             playerState.camPosition = player._maingameObject.GetComponent<PlayerController>().cameraTrans.position;
             playerState.camRotation = player._maingameObject.GetComponent<PlayerController>().cameraTrans.rotation;
+            playerState.lastProcessedInput = player._lastProcessedInput;
             playerStateData.Put((int)PacketType.ServerState);
             playerState.Serialize(playerStateData);
           //  Debug.Log($" New Rotation :({rotation.x}, {rotation.x}, {rotation.z}, {rotation.w})");
@@ -254,12 +271,14 @@ public class NetworkManagerServer : MonoBehaviour, INetEventListener
 
     private void Update()
     {
-        FU_instance.Update();
         _server.PollEvents();
+        FU_instance.Update();
     }
 
     private void OnDestroy()
     {
+       
+        ServerPlayersListClear();
         if (_server != null) { _server.Stop(); }
         if (updateRoutine != null) { StopCoroutine(updateRoutine); }
         updateRoutine = null;
@@ -272,8 +291,9 @@ public class NetworkManagerServer : MonoBehaviour, INetEventListener
 
     Vector3 RandomPosition()
     {
-        return (new Vector3(Random.Range(Xmin, Xmax), 2.0f, Random.Range(Zmin, Zmax)));
-        //return (new Vector3(0, 2.0f, 0));
+        //Cause Random Position Seems to cause Problems
+       // return (new Vector3(Random.Range(Xmin, Xmax), 2.0f, Random.Range(Zmin, Zmax)));
+        return (new Vector3(0, 0.0f, 0));
     }
 
     Color RandomColor()
@@ -314,6 +334,7 @@ public class NetworkManagerServer : MonoBehaviour, INetEventListener
             spawnPacket.CameraRotation = player._cameraTrans.rotation;
             spawnPacket.Serialize(_spawnwriter);
             SendToAllClients(_spawnwriter);
+        //    Debug.Log($"At The Position({player._maingameObject.GetComponent<PlayerController>().transform.position}) Rotation({player._maingameObject.GetComponent<PlayerController>().transform.rotation})");
             player._maingameObject.GetComponent<PlayerController>().isReady = true;
         });
     }
@@ -344,8 +365,19 @@ public class NetworkManagerServer : MonoBehaviour, INetEventListener
     void ServerPlayersListRemove(NetPeer peer)
     {
         ServerPlayer serverPlayer = _serverPlayers.Find(player => player._id == peer.Id);
+        clientInputs[serverPlayer].Clear();
+        clientInputs.Remove(serverPlayer);
         Destroy(serverPlayer._maingameObject);
         _serverPlayers.Remove(serverPlayer);
+    }
+
+    void ServerPlayersListClear()
+    {
+        clientInputs.Clear();
+        _serverPlayers.ForEach(serverPlayer => {
+            Destroy(serverPlayer._maingameObject);
+        });
+        _serverPlayers.Clear();
     }
 
     public void OnPeerConnected(NetPeer peer)
@@ -414,7 +446,7 @@ public class NetworkManagerServer : MonoBehaviour, INetEventListener
                     emptyObject.transform.position = cameraSetup.Position;
                     emptyObject.transform.rotation = cameraSetup.Rotation;
                     _clientsCameraTrans.Add(cameraSetup.Id, emptyObject.transform);
-                    //Destroy(emptyObject); //Dont forget to get rid of those empy gameobject on the server
+                   // Destroy(emptyObject); //Dont forget to get rid of those empy gameobject on the server
                 }
                 break;
 
@@ -433,9 +465,7 @@ public class NetworkManagerServer : MonoBehaviour, INetEventListener
                     pendingInput.nInput.MouseX = reader.GetFloat();
                     pendingInput.nInput.MouseY = reader.GetFloat();
                     UpdateClientInputPendingList(senderPeerId, pendingInput);
-                    Debug.Log($"Pending Input From : {senderPeerId}");
-                    if (_serverPlayers.Count > 1)
-                    Debug.Log($"Id : {_serverPlayers[0]._id}  Id : {_serverPlayers[1]._id}");
+      
                 //    Debug.Log($"Received The Input inputX : {pendingInput.nInput.InputX} inputY : {pendingInput.nInput.InputY} mouseX : {pendingInput.nInput.MouseX} mouseY {pendingInput.nInput.MouseY} nTime {pendingInput.nTime} ");
 
                 }
@@ -467,8 +497,85 @@ public class NetworkManagerServer : MonoBehaviour, INetEventListener
         Debug.Log($"Peer Id {peerId} over : {_serverPlayers.Count} ");
 
         if (serverPlayer == null) { Debug.Log("Should Never Happpend !!! You have input from unknown peer "); return; }
-        serverPlayer._clientInput.Add(pendingInput);
+        ClientInputState message = new ClientInputState();
+
+        message.nInput = pendingInput.nInput;
+        message.nTime = pendingInput.nTime;
+        message.simulationFrame = pendingInput.sequenceNumber;
+        OnClientInputStateReceived(serverPlayer, message);
+       // serverPlayer._clientInput.Add(pendingInput);
     }
+
+    void ProcessClientInputs(ServerPlayer serverPlayer, ClientInputState inputState)
+    {
+        serverPlayer._maingameObject.GetComponent<PlayerController>().ApplyInput(inputState.nInput, inputState.nTime); //
+        serverPlayer._lastProcessedInput = inputState.simulationFrame;
+    }
+
+    SimulationState  ClientCurrentSimulationState(ServerPlayer serverPlayer, ClientInputState inputState)
+    {
+        return new SimulationState
+        {
+            position = serverPlayer._maingameObject.GetComponent<PlayerController>().transform.position,
+            rotation = serverPlayer._maingameObject.GetComponent<PlayerController>().transform.rotation,
+            simulationFrame = inputState.simulationFrame + 1
+        };
+
+    }
+
+    private void FixedUpdate2()
+    {
+            foreach (KeyValuePair<ServerPlayer,  Queue<ClientInputState>> entry in clientInputs)
+            {
+            ServerPlayer clientPlayer = entry.Key;
+            Queue<ClientInputState> queue = entry.Value;
+
+            ClientInputState inputState = null;
+            while (queue.Count > 0 && (inputState = queue.Dequeue()) != null)
+            {
+                // Process the input.
+                ProcessClientInputs(clientPlayer, inputState);
+                SimulationState state = ClientCurrentSimulationState(clientPlayer, inputState);
+                NetworkServerSendToClient(clientPlayer, state);
+            }
+        }
+    }
+
+    void NetworkServerSendToClient(ServerPlayer player, SimulationState state)
+    {
+        PlayerStatePacket playerState = new PlayerStatePacket();
+        NetDataWriter playerStateData = new NetDataWriter();
+
+        playerState.Id = player._id;
+        //playerState.Position = player._maingameObject.GetComponent<PlayerController>().transform.position;
+        //playerState.Rotation = player._maingameObject.GetComponent<PlayerController>().transform.rotation;
+        //playerState.AnimSpeed = player._maingameObject.GetComponent<PlayerController>().animSpeed;
+        //playerState.camPosition = player._maingameObject.GetComponent<PlayerController>().cameraTrans.position;
+        //playerState.camRotation = player._maingameObject.GetComponent<PlayerController>().cameraTrans.rotation;
+
+        playerState.Position = state.position;
+        playerState.Rotation = state.rotation;
+        playerState.AnimSpeed = state.animSpeed;
+        playerState.camPosition = state.camPosition;
+        playerState.camRotation = state.camRotation;
+        
+        playerState.lastProcessedInput = state.simulationFrame; //player._lastProcessedInput;
+        playerStateData.Put((int)PacketType.ServerState);
+        playerState.Serialize(playerStateData);
+        //  Debug.Log($" New Rotation :({rotation.x}, {rotation.x}, {rotation.z}, {rotation.w})");
+        SendToAllClients(playerStateData);
+        Debug.Log($"New Server to : {player._id}");
+    }
+
+    private void OnClientInputStateReceived(ServerPlayer serverPlayer, ClientInputState message)
+    {
+        if (clientInputs.ContainsKey(serverPlayer) == false)
+        {
+            clientInputs.Add(serverPlayer, new Queue<ClientInputState>());
+        }
+        clientInputs[serverPlayer].Enqueue(message);
+    }
+
 
     public void OnNetworkReceiveUnconnected(IPEndPoint remoteEndPoint, NetPacketReader reader, UnconnectedMessageType messageType)
     {
