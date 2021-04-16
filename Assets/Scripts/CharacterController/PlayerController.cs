@@ -69,8 +69,6 @@ public class PlayerController : MonoBehaviourRPC
     {
         yaw += nInput.MouseX * mouseSensitivity;
         pitch -= nInput.MouseY * mouseSensitivity;
-      /*  yaw += Input.GetAxis("Mouse X") * mouseSensitivity;
-        pitch -= Input.GetAxis("Mouse Y") * mouseSensitivity;*/
         pitch = Mathf.Clamp(pitch, pitchMinMax.x, pitchMinMax.y);
         targetRotation = new Vector3(pitch, yaw);
         cameraTrans.eulerAngles = targetRotation;
@@ -110,11 +108,8 @@ public class PlayerController : MonoBehaviourRPC
         float targetSpeed = ((running) ? runSpeed : walkSpeed) * inputDir.magnitude;
         currentSpeed = targetSpeed; 
         Vector3 move = transform.forward * currentSpeed + velocityY * Vector3.up;
-        // transform.Translate(move * fpsTick);
         controller.Move(move * fpsTick);
-        //  Debug.Log($"Before Current Speed : {currentSpeed}");
         currentSpeed = new Vector2(controller.velocity.x, controller.velocity.z).magnitude;
-      //  Debug.Log($"After Current Speed : {currentSpeed}");
         velocityY += gravity * fpsTick;
     }
 

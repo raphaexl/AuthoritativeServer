@@ -60,12 +60,6 @@ public class ServerPlayer
             $": Rot({_rotation.x}, {_rotation.y}, {_rotation.z}, {_rotation.w}) \n" +
             $" : Color :-) + " +
             $" : AnimSpeed : {_animSpeed} ");
-        /*
-        return ($" Id {_id} \n" +
-          $" Pos({_maingameObject.transform.position.x}, {_maingameObject.transform.position.y}, {_maingameObject.transform.position.z}) \n" +
-          $": Rot({_maingameObject.transform.rotation.x}, {_maingameObject.transform.rotation.y}, {_maingameObject.transform.rotation.z}, {_maingameObject.transform.rotation.w}) \n" +
-          $" : Color :-) ");*/
-        // return base.ToString();
     }
 }
 
@@ -73,8 +67,6 @@ public class NetworkManagerServer : MonoBehaviour, INetEventListener
 {
     protected EventBasedNetListener netListener;
     protected NetManager _server;
-
-    private Coroutine updateRoutine;
 
     protected NetDataWriter writer;
     List<ServerPlayer> _serverPlayers;
@@ -107,18 +99,8 @@ public class NetworkManagerServer : MonoBehaviour, INetEventListener
         FU_instance = new CustomFixedUpdate(1.0f / AuthServer.SERVER_UPDATE_RATE, OnFixedUpdate);
         clientInputs = new Dictionary<ServerPlayer, Queue<ClientInputState>>();
         Debug.Log($"Server Start at Port {AuthServer.SERVER_PORT}");
-        //  updateRoutine = StartCoroutine(serverUpdate(AuthServer.SERVER_UPDATE_RATE));
     }
 
-    /*private void OnEnable()
-    {
-        updateRoutine = StartCoroutine(serverUpdate(SERVER_UPDATE_RATE));
-    }
-    private void OnDisable()
-    {
-        StopCoroutine(updateRoutine);
-        updateRoutine = null;
-    }*/
 
     // this method will be called AuthServer.SERVER_UPDATE_RATE times per second
     void OnFixedUpdate(float dt)
@@ -138,20 +120,6 @@ public class NetworkManagerServer : MonoBehaviour, INetEventListener
             }
         }
     }
-
-    IEnumerator serverUpdate(float update_rate)
-    {
-        var wait = new WaitForSecondsRealtime(1.0f / update_rate);
-
-        while (true)
-        {
-            //Render world if we were to
-            yield return wait;
-        }
-    }
-
-
-
 
     void sendRPCToClients()
     {
@@ -176,11 +144,11 @@ public class NetworkManagerServer : MonoBehaviour, INetEventListener
 
     private void OnDestroy()
     {
-       
         ServerPlayersListClear();
-        if (_server != null) { _server.Stop(); }
-        if (updateRoutine != null) { StopCoroutine(updateRoutine); }
-        updateRoutine = null;
+        _serverPlayers.Clear();
+        _rPCPackets.Clear();
+        _clientsCameraTrans.Clear();
+        clientInputs.Clear();
     }
 
     const float Zmax = 2f;
@@ -226,8 +194,8 @@ public class NetworkManagerServer : MonoBehaviour, INetEventListener
 
             _spawnwriter.Put((int)PacketType.Spawn);
             spawnPacket.PlayerId = player._id;
-            spawnPacket.Position = player._maingameObject.GetComponent<PlayerController>().transform.position;// player._maingameObject.transform.position;
-            spawnPacket.Rotation = player._maingameObject.GetComponent<PlayerController>().transform.rotation;// player._maingameObject.transform.rotation;
+            spawnPacket.Position = player._maingameObject.GetComponent<PlayerController>().transform.position;
+            spawnPacket.Rotation = player._maingameObject.GetComponent<PlayerController>().transform.rotation;
             spawnPacket.Albedo = player._maingameObject.transform.GetChild(1).GetComponent<Renderer>().material.color;
             spawnPacket.CameraPosition = player._cameraTrans.position;
             spawnPacket.CameraRotation = player._cameraTrans.rotation;
@@ -272,11 +240,11 @@ public class NetworkManagerServer : MonoBehaviour, INetEventListener
 
     void ServerPlayersListClear()
     {
-        clientInputs.Clear();
         _serverPlayers.ForEach(serverPlayer => {
             Destroy(serverPlayer._maingameObject);
         });
         _serverPlayers.Clear();
+        clientInputs.Clear();
     }
 
     public void OnPeerConnected(NetPeer peer)
@@ -355,7 +323,6 @@ public class NetworkManagerServer : MonoBehaviour, INetEventListener
                     inputPacket = new InputPacket();
                     inputPacket.Deserialize(reader);
                     UpdateClientInputs(inputPacket.Id, inputPacket);
-                  // Debug.Log($"Received The Input inputX : {inputPacket.InputX} inputY : {inputPacket.InputY} mouseX : {inputPacket.MouseX} mouseY {inputPacket.MouseY} nTime {inputPacket.NTime} ");
                 }
                 break;
             case PacketType.RPC:
@@ -398,13 +365,11 @@ public class NetworkManagerServer : MonoBehaviour, INetEventListener
         message.NTime = inputPacket.NTime;
         message.Timestamp = inputPacket.Timestamp;
         OnClientInputStateReceived(serverPlayer, message);
-       // serverPlayer._clientInput.Add(pendingInput);
     }
 
     void ProcessClientInputs(ServerPlayer serverPlayer, ClientInputState inputState)
     {
-        serverPlayer._maingameObject.GetComponent<PlayerController>().ApplyInput(inputState.nInput, inputState.NTime); //
-       // serverPlayer._maingameObject.GetComponent<PlayerController>().ApplyInput(inputState.nInput, Time.fixedDeltaTime); //
+        serverPlayer._maingameObject.GetComponent<PlayerController>().ApplyInput(inputState.nInput, inputState.NTime);
         serverPlayer.Timestamp = inputState.Timestamp;
     }
 
@@ -423,6 +388,7 @@ public class NetworkManagerServer : MonoBehaviour, INetEventListener
 
     }
 
+    //For production purpose where the server will be at 50fps
     private void FixedUpdate2()
     {
         foreach (KeyValuePair<ServerPlayer,  Queue<ClientInputState>> entry in clientInputs)
@@ -447,12 +413,6 @@ public class NetworkManagerServer : MonoBehaviour, INetEventListener
         NetDataWriter playerStateData = new NetDataWriter();
 
         playerState.Id = player._id;
-        //playerState.Position = player._maingameObject.GetComponent<PlayerController>().transform.position;
-        //playerState.Rotation = player._maingameObject.GetComponent<PlayerController>().transform.rotation;
-        //playerState.AnimSpeed = player._maingameObject.GetComponent<PlayerController>().animSpeed;
-        //playerState.camPosition = player._maingameObject.GetComponent<PlayerController>().cameraTrans.position;
-        //playerState.camRotation = player._maingameObject.GetComponent<PlayerController>().cameraTrans.rotation;
-
         playerState.Position = state.position;
         playerState.Rotation = state.rotation;
         playerState.AnimSpeed = state.animSpeed;
@@ -462,7 +422,6 @@ public class NetworkManagerServer : MonoBehaviour, INetEventListener
         playerState.Timestamp = state.Timestamp; 
         playerStateData.Put((int)PacketType.ServerState);
         playerState.Serialize(playerStateData);
-        //  Debug.Log($" New Rotation :({rotation.x}, {rotation.x}, {rotation.z}, {rotation.w})");
         SendToAllClients(playerStateData);
     }
 

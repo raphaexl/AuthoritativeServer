@@ -111,7 +111,7 @@ public class Client : NetworkManagerClient
     private Tools.NInput currentNInput;
     private Tools.NInput previousNInput;
     //List of Predicted Packages
-    List<StateBuffer> _predictedPackages;
+    List<ClientState> _predictedPackages;
     float _previousTime;
     //List of Positions for Lag Come
 
@@ -205,7 +205,7 @@ public class Client : NetworkManagerClient
         playerViewClients = new Dictionary<int, PlayerViewClient>();
         // FU_instance = new CustomFixedUpdate(1.0f / AuthServer.GAME_FPS, OnFixedUpdate);
         _clients = new Dictionary<int, GameObject>();
-        _predictedPackages = new List<StateBuffer>();
+        _predictedPackages = new List<ClientState>();
         //Should be OnEnable
         // customUpdateCoroutine = StartCoroutine(CustomUpdate(AuthServer.GAME_FPS));
     }
@@ -240,6 +240,7 @@ public class Client : NetworkManagerClient
         {
             if (!_localPlayer || !_localPlayer.isReady) { yield return wait; }
             ProcessInputs();
+            LagCompensation();
             yield return wait;
         }
     }
@@ -307,9 +308,6 @@ public class Client : NetworkManagerClient
                 _localPlayer = go.AddComponent<PlayerViewClient>();
                 _localPlayer.Spawn(isLocalPlayer, id, position, rotation, color, camEmpty.transform);
                 if (_localPlayer != null) {
-                    //Debug.Log("Local Player is Created");
-                    //Debug.Log($"To At The Position({position}) To Rotation({rotation})");
-                    //Debug.Log($"At The Position({_localPlayer.GetComponent<PlayerController>().transform.position}) Rotation({_localPlayer.GetComponent<PlayerController>().transform.rotation})");
                     _localPlayer.isReady = true;
                     _localPlayer.isMine = true;
                 }
@@ -372,16 +370,19 @@ public class Client : NetworkManagerClient
         // if (random.Next(10, 20) < 15)
         SendInputToServer(inputPacket);
         //Client side prediction
-        _localPlayer.GetComponent<PlayerController>().ApplyInput(currentNInput, inputPacket.NTime);
-
-        _predictedPackages.Add(new StateBuffer {
-            Position = _localPlayer.GetComponent<PlayerController>().transform.position,
-            Rotation = _localPlayer.GetComponent<PlayerController>().transform.rotation,
-            AnimSpeed = _localPlayer.GetComponent<PlayerController>().animSpeed,
-            CamPosition = _localPlayer.GetComponent<PlayerController>().cameraTrans.position,
-            CamRotation = _localPlayer.GetComponent<PlayerController>().cameraTrans.rotation,
-            Timestamp = timestamp,
-        });
+        if (clientSidePrediction)
+        {
+            _localPlayer.GetComponent<PlayerController>().ApplyInput(currentNInput, inputPacket.NTime);
+            _predictedPackages.Add(new ClientState
+            {
+                Position = _localPlayer.GetComponent<PlayerController>().transform.position,
+                Rotation = _localPlayer.GetComponent<PlayerController>().transform.rotation,
+                AnimSpeed = _localPlayer.GetComponent<PlayerController>().animSpeed,
+                CamPosition = _localPlayer.GetComponent<PlayerController>().cameraTrans.position,
+                CamRotation = _localPlayer.GetComponent<PlayerController>().cameraTrans.rotation,
+                Timestamp = timestamp,
+            });
+        }
         previousNInput = currentNInput;
     }
 
@@ -473,22 +474,29 @@ public class Client : NetworkManagerClient
     {
         if (_localPlayer) {
             //Reconciliation will be needed here
-            float correctionThreshold = 0.001f;
-            var transmittedPackage = _predictedPackages.Where(x => x.Timestamp == serverState.Timestamp).FirstOrDefault();
-            if (transmittedPackage == null)
+            if (clientSidePrediction && serverReconciliation)
             {
-                Debug.Log("You should do something here :-) ");
-                // _localPlayer.ApplyServerState(serverState.position, serverState.rotation, serverState.animSpeed, serverState.camPosition, serverState.camRotation);
-                return;
+                float correctionThreshold = 0.001f;
+                var transmittedPackage = _predictedPackages.Where(x => x.Timestamp == serverState.Timestamp).FirstOrDefault();
+                if (transmittedPackage == null)
+                {
+                    //Debug.Log("You should do something here :-) ");
+                    // _localPlayer.ApplyServerState(serverState.position, serverState.rotation, serverState.animSpeed, serverState.camPosition, serverState.camRotation);
+                    return;
+                }
+                if (Vector3.Distance(transmittedPackage.Position,
+                    serverState.position) > correctionThreshold)
+                {
+                    //Debug.Log("Reconciliation");
+                    _localPlayer.ApplyServerState(serverState.position, serverState.rotation, serverState.animSpeed, serverState.camPosition, serverState.camRotation);
+                }
+                //Clear all pedicted
+                _predictedPackages.RemoveAll(x => x.Timestamp <= serverState.Timestamp);
             }
-            if (Vector3.Distance(transmittedPackage.Position,
-                serverState.position) > correctionThreshold)
+            else
             {
-                Debug.Log("Reconciliation");
                 _localPlayer.ApplyServerState(serverState.position, serverState.rotation, serverState.animSpeed, serverState.camPosition, serverState.camRotation);
             }
-            //Clear all pedicted
-            _predictedPackages.RemoveAll(x => x.Timestamp <= serverState.Timestamp);
         }
         else { Debug.Log("But Why ???"); return; }
     }
@@ -566,6 +574,10 @@ void OnServerStatePacketReceive(ServerState serverState)
     #region Remove Self or Client on disconnection
     void SelfRemove()
     {
+        _remotePlayers.Clear();
+        playerViewClients.Clear();
+        _clients.Clear();
+        _predictedPackages.Clear();
         Destroy(_localPlayer.GetComponent<PlayerViewClient>());
         Destroy(_localPlayer);
         _clients.Remove(Id);

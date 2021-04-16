@@ -14,7 +14,7 @@ using System.Linq;
 //It should have the list of all rpc's related to this gameObject
 //we can call Rpc using this class * we can receive RPC from client or server class to search in the list of RPC
 
-public class StateBuffer
+public class ClientState
 {
     public Vector3 Position;
     public Quaternion Rotation;
