@@ -21,14 +21,14 @@ public struct InputPacket : INetSerializable
     public  float InputY;
     public  bool Jump;
     public  bool Run;
-    public int SequenceNumber;
     public float NTime;
+    public float Timestamp;
 
 
     public void Deserialize(NetDataReader reader)
     {
         Id = reader.GetInt();
-        SequenceNumber = reader.GetInt();
+        Timestamp = reader.GetFloat();
         NTime = reader.GetFloat();
         MouseX = reader.GetFloat();
         MouseY = reader.GetFloat();
@@ -36,13 +36,12 @@ public struct InputPacket : INetSerializable
         InputY = reader.GetFloat();
         Jump = reader.GetBool();
         Run = reader.GetBool();
-
     }
 
     public void Serialize(NetDataWriter writer)
     {
         writer.Put(Id);
-        writer.Put(SequenceNumber);
+        writer.Put(Timestamp);
         writer.Put(NTime);
         writer.Put(MouseX);
         writer.Put(MouseY);
@@ -58,7 +57,7 @@ public struct PlayerStatePacket : INetSerializable
 {
     //PacketType type;
     public int Id;
-    public int lastProcessedInput;
+    public float Timestamp;
     public Vector3 Position;
     public Quaternion Rotation;
     public Vector3 camPosition;
@@ -69,7 +68,7 @@ public struct PlayerStatePacket : INetSerializable
     public void Deserialize(NetDataReader reader)
     {
         Id = reader.GetInt();
-        lastProcessedInput = reader.GetInt();
+        Timestamp = reader.GetFloat();
         Position.x = reader.GetFloat();
         Position.y = reader.GetFloat();
         Position.z = reader.GetFloat();
@@ -90,7 +89,7 @@ public struct PlayerStatePacket : INetSerializable
     public void Serialize(NetDataWriter writer)
     {
         writer.Put(Id);
-        writer.Put(lastProcessedInput);
+        writer.Put(Timestamp);
         writer.Put(Position.x);
         writer.Put(Position.y);
         writer.Put(Position.z);

@@ -4,53 +4,32 @@ using UnityEngine;
 using LiteNetLib;
 using LiteNetLib.Utils;
 using System;
+using System.Linq;
 
-public class PendingInput
-{
-    public Tools.NInput nInput;
-    public float nTime; //When did we set that input (received it);
-    public int sequenceNumber;
-    public bool processed;
-
-
-    public PendingInput()
-    {
-        this.sequenceNumber = -1;
-        this.processed = false;
-    }
-
-    public PendingInput(Tools.NInput _nInput, float _nTime, int seqNumber)
-    {
-        this.nInput = _nInput;
-        this.nTime = _nTime;
-        this.sequenceNumber = seqNumber;
-        this.processed = false;
-    }
-}
 
 public class ClientInputState
 {
     public Tools.NInput nInput;
-    public float nTime; //When did we set that input (received it);
-    public int simulationFrame;
+    public float NTime; //When did we set that input (received it);
+    public float Timestamp;
 
     public ClientInputState()
     {
-        this.simulationFrame = -1;
+        this.Timestamp = -1;
     }
 
-    public ClientInputState(Tools.NInput _nInput, float _nTime, int seqNumber)
+    public ClientInputState(Tools.NInput _nInput, float _nTime, float _timestamp)
     {
         this.nInput = _nInput;
-        this.nTime = _nTime;
-        this.simulationFrame = seqNumber;
+        this.NTime = _nTime;
+        this.Timestamp = _timestamp;
     }
 }
 
 public class SimulationState
 {
     public int peerId;
-    public int simulationFrame;
+    public float Timestamp;
     public float animSpeed;
     public Vector3 position;
     public Quaternion rotation;
@@ -60,7 +39,6 @@ public class SimulationState
     public SimulationState()
     {
         peerId = 0;
-        simulationFrame = 0;
         animSpeed = 0;
         position = Vector3.zero;
         rotation = Quaternion.identity;
@@ -74,7 +52,7 @@ public class SimulationState
         position = playerStatePacket.Position;
         rotation = playerStatePacket.Rotation;
         animSpeed = playerStatePacket.AnimSpeed;
-        simulationFrame = playerStatePacket.lastProcessedInput;
+        Timestamp = playerStatePacket.Timestamp;
         camPosition = playerStatePacket.camPosition;
         camRotation = playerStatePacket.camRotation;
     }
@@ -84,16 +62,15 @@ public class SimulationState
         return ($" Id {peerId} \n" +
             $" Pos({position.x}, {position.y}, {position.z}) \n" +
             $": Rot({rotation.x}, {rotation.y}, {rotation.z}, {rotation.w}) \n" +
-            $" : Last Processed + {simulationFrame} " +
+            $" : Timestamp + {Timestamp} " +
             $" : AnimSpeed : {animSpeed} ");
     }
 }
 
 public class ServerState
 {
-    public bool processed = false;
     public int peerId;
-    public int lastProcessedInput;
+    public  float  Timestamp;
     public float animSpeed;
     public Vector3 position;
     public Quaternion rotation;
@@ -106,10 +83,9 @@ public class ServerState
         position = playerStatePacket.Position;
         rotation = playerStatePacket.Rotation;
         animSpeed = playerStatePacket.AnimSpeed;
-        lastProcessedInput = playerStatePacket.lastProcessedInput;
+        Timestamp = playerStatePacket.Timestamp;
         camPosition = playerStatePacket.camPosition;
         camRotation = playerStatePacket.camRotation;
-        processed = false;
     }
 
     public override string ToString()
@@ -117,15 +93,16 @@ public class ServerState
         return ($" Id {peerId} \n" +
             $" Pos({position.x}, {position.y}, {position.z}) \n" +
             $": Rot({rotation.x}, {rotation.y}, {rotation.z}, {rotation.w}) \n" +
-            $" : Last Processed + {lastProcessedInput} " +
+            $" : Timestamp + {Timestamp} " +
             $" : AnimSpeed : {animSpeed} "); 
     }
 }
+
 public class Client : NetworkManagerClient
 {
     public static Client Instance;
     [SerializeField]
-    GameObject playerGO= default;
+    GameObject playerGO = default;
 
     List<PlayerViewClient> _remotePlayers;
     PlayerViewClient _localPlayer;
@@ -133,8 +110,8 @@ public class Client : NetworkManagerClient
     private int Id;
     private Tools.NInput currentNInput;
     private Tools.NInput previousNInput;
-    //List of Pending Input
-    List<PendingInput> _pendingNInputs;
+    //List of Predicted Packages
+    List<StateBuffer> _predictedPackages;
     float _previousTime;
     //List of Positions for Lag Come
 
@@ -147,47 +124,50 @@ public class Client : NetworkManagerClient
     [SerializeField]
     public bool interpolation = default;
 
-    int _inputSeqNumber;
 
     bool isConnected = false;
 
     Coroutine customUpdateCoroutine;
 
     //List of the Player Views Here
-    public Dictionary<int,  PlayerViewClient> playerViewClients;
-    List<ServerState> _serverStates;
-    List<ServerState> _clientStates;
-
-    //Client Side Prediction
-    private static ClientInputState defaultInputState = new ClientInputState();
-
-    // The maximum cache size for both the ClientInputState 
-    private const int STATE_CACHE_SIZE = 256;
-
-    // The cache that stores all of the client's predicted movement reuslts. 
-    private SimulationState[] simulationStateCache = new SimulationState[STATE_CACHE_SIZE];
-
-    // The cache that stores all of the client's inputs. 
-    private ClientInputState[] inputStateCache = new ClientInputState[STATE_CACHE_SIZE];
-
-    // The last known SimulationState provided by the server. 
-    private SimulationState serverSimulationState;
-    // The client's current ClientInputState. 
-    private ClientInputState inputState;
-
-    // The client's current simulation frame. 
-    private int simulationFrame;
-
-    // The last simulationFrame that we Reconciled from the server. 
-    private int lastCorrectedFrame;
-
-    //Lag compensation
-    float currentTime = 0f;
-
-
+    public Dictionary<int, PlayerViewClient> playerViewClients;
     private CustomFixedUpdate FU_instance;
 
-    private  Dictionary<int, GameObject> _clients;
+    private Dictionary<int, GameObject> _clients;
+
+    private float m_sendSpeed;
+    public float SendSpeed
+    {
+        get
+        {
+            if (m_sendSpeed < 0.1f)
+            {
+                m_sendSpeed = 0.1f;
+            }
+            return m_sendSpeed;
+        }
+        set
+        {
+            m_sendSpeed = value;
+        }
+    }
+    private float nextTick = 0f;
+
+    public void Tick()
+    {
+        nextTick += (1.0f / (this.SendSpeed * Time.fixedDeltaTime));
+        if (nextTick > 1.0f)//&& Packages.Count > 0)
+        {
+            nextTick = 0f;
+            /* if (OnRequiredPackageTransmit != null)
+             {
+                 byte[] bytes = CreateBytes();
+                 Packages.Clear();
+                 OnRequiredPackageTransmit(bytes);
+             }*/
+        }
+    }
+
 
     private void Awake()
     {
@@ -204,11 +184,8 @@ public class Client : NetworkManagerClient
     // this method will be called AuthSetrver.GAME_FPS times per second
     void OnFixedUpdate(float dt)
     {
-        return;
         if (!_localPlayer || !_localPlayer.isReady) { return; }
-        processInputs2();
-        processServerState2();
-        EntitiesInterpolation();
+        ProcessInputs();
     }
 
 
@@ -224,18 +201,14 @@ public class Client : NetworkManagerClient
         clientSidePrediction = false;
         serverReconciliation = false;
         interpolation = false;
-        _inputSeqNumber = 0;
-        _pendingNInputs = new List<PendingInput>();
         _previousTime = Time.time;
         playerViewClients = new Dictionary<int, PlayerViewClient>();
-        _serverStates = new List<ServerState>();
-       // FU_instance = new CustomFixedUpdate(1.0f / AuthServer.GAME_FPS, OnFixedUpdate);
+        // FU_instance = new CustomFixedUpdate(1.0f / AuthServer.GAME_FPS, OnFixedUpdate);
         _clients = new Dictionary<int, GameObject>();
+        _predictedPackages = new List<StateBuffer>();
         //Should be OnEnable
         // customUpdateCoroutine = StartCoroutine(CustomUpdate(AuthServer.GAME_FPS));
-        simulationFrame = 0;
-        lastCorrectedFrame = 0;
-}
+    }
 
     /*
     private void OnEnable()
@@ -250,178 +223,38 @@ public class Client : NetworkManagerClient
         base.Connect(AuthServer.CONNECTION_KEY);
     }
 
-   
-    private void FixedUpdate2()
+    private void FixedUpdate()
     {
-  
+
         if (!_localPlayer || !_localPlayer.isReady) { return; }
-
-        // processInputs2();
-        //processServerState2();
-
-        //processInputs();
-        //processServerState();
-        // EntitiesInterpolation();
+        ProcessInputs();
+        LagCompensation();
     }
-    
 
-    IEnumerator CustomUpdate(float fpsRate) 
+
+    IEnumerator CustomUpdate(float fpsRate)
     {
-       // WaitForSecondsRealtime wait = new WaitForSecondsRealtime(1.0f / fpsRate);
+        // WaitForSecondsRealtime wait = new WaitForSecondsRealtime(1.0f / fpsRate);
         WaitForSecondsRealtime wait = new WaitForSecondsRealtime(1.0f);
         while (true)
         {
             if (!_localPlayer || !_localPlayer.isReady) { yield return wait; }
-            processInputs();
-            processServerState();
-            EntitiesInterpolation();
+            ProcessInputs();
             yield return wait;
         }
-    }
-
-    void processServerState()
-    {
-        List<ServerState> toRemove;
-
-        //may be store and remove the applied states ??
-        toRemove = new List<ServerState>();
-       // Debug.Log($"Before Server State Cunt : { _serverStates.Count}");
-
-        _serverStates.ForEach(serverState =>
-        {
-            if (serverState.peerId == Id  && !serverState.processed) //Server Reconciliation
-            {
-                ServerAuthoritativeState(serverState);
-                if (serverState.processed)
-                {
-                   ServerReconciliation(serverState);
-                    toRemove.Add(serverState);
-                }
-            }
-        });
-        toRemove.ForEach(serverState =>
-       {
-           if (serverState.processed) { _serverStates.Remove(serverState); }
-       });
-        toRemove.Clear();
-       // Debug.Log($"After Server State Cunt : { _serverStates.Count}");
     }
     //Won't allow update from inherited
 
     new private void Update()
     {
-
         base.Update();
         if (!isConnected) { return; }
-
-//        FU_instance.Update();
-
-        if (!_localPlayer) { return; }
-        if (!UpdateInput()) { return; }
-
-        inputState = new ClientInputState();
-        inputState.nInput = currentNInput;
-        //inputState.nTime = Time.deltaTime;
-        //Never do this but :-)
+        //FU_instance.Update();
         clientSidePrediction = ClientUIController.Instance.clientSidePrediction;
         serverReconciliation = ClientUIController.Instance.serverReconcilation;
         interpolation = ClientUIController.Instance.lagCompensation;
     }
-    #region Another Attenpt
-    void NetworkClientSend(ClientInputState inputState)
-    {
-        PendingInput pendingInput = new PendingInput();
-        pendingInput.nInput = inputState.nInput;
-        pendingInput.nTime = inputState.nTime;
-        pendingInput.sequenceNumber = inputState.simulationFrame;
-        SendInputToServer(pendingInput);
-    }
 
-    private void FixedUpdate()
-    {
-        if (inputState == null)
-        {
-            return;
-        }
-        else
-        {
-            Debug.Log("Applying State From Here");
-        }
-        inputState.nTime = Time.fixedDeltaTime;
-        inputState.simulationFrame = simulationFrame;
-        ProcessInputs(inputState);
-        NetworkClientSend(inputState);
-        if (serverSimulationState != null) Reconciliate();
-        SimulationState simulationState = CurrentSimulationState(inputState);
-        int cacheIndex = simulationFrame % STATE_CACHE_SIZE;
-        simulationStateCache[cacheIndex] = simulationState;
-        inputStateCache[cacheIndex] = inputState;
-        ++simulationFrame;
-        previousNInput = currentNInput;
-    }
-
-    public void ProcessInputs(ClientInputState state)
-    {
-        if (state == null)
-        {
-            state = defaultInputState;
-        }
-        _localPlayer.GetComponent<PlayerController>().ApplyInput(state.nInput, state.nTime);
-    }
-
-
-    private void Reconciliate()
-    {
-        if (serverSimulationState.simulationFrame <= lastCorrectedFrame) return;
-        int cacheIndex = serverSimulationState.simulationFrame % STATE_CACHE_SIZE;
-        ClientInputState cachedInputState = inputStateCache[cacheIndex];
-        SimulationState cachedSimulationState = simulationStateCache[cacheIndex];
-        if (cachedInputState == null || cachedSimulationState == null)
-        {
-            _localPlayer.GetComponent<PlayerController>().transform.position = serverSimulationState.position;
-            lastCorrectedFrame = serverSimulationState.simulationFrame;
-            return;
-        }
-        float positionErrordX = Mathf.Abs(cachedSimulationState.position.x -  serverSimulationState.position.x);
-        float positionErrordY = Mathf.Abs(cachedSimulationState.position.y -  serverSimulationState.position.y);
-        float positionErrordZ = Mathf.Abs(cachedSimulationState.position.z - serverSimulationState.position.z);
-        float tolerance = 0F;
-
-        if (positionErrordX > tolerance || positionErrordY > tolerance || positionErrordZ > tolerance)
-        {
-            _localPlayer.GetComponent<PlayerController>().transform.position = serverSimulationState.position;
-            _localPlayer.GetComponent<PlayerController>().transform.rotation = serverSimulationState.rotation;
-            int rewindFrame = serverSimulationState.simulationFrame;
-            while (rewindFrame < simulationFrame)
-            {
-                int rewindCacheIndex = rewindFrame % STATE_CACHE_SIZE;
-                ClientInputState rewindCachedInputState = inputStateCache[rewindCacheIndex];
-                SimulationState rewindCachedSimulationState = simulationStateCache[rewindCacheIndex];
-                if (rewindCachedInputState == null || rewindCachedSimulationState == null)
-                {
-                    ++rewindFrame;
-                    continue;
-                }
-                ProcessInputs(rewindCachedInputState);
-                SimulationState rewoundSimulationState = CurrentSimulationState(inputState); //Not Sure !!!!
-                rewoundSimulationState.simulationFrame = rewindFrame;
-                simulationStateCache[rewindCacheIndex] = rewoundSimulationState;
-                ++rewindFrame;
-            }
-        }
-        lastCorrectedFrame = serverSimulationState.simulationFrame;
-    }
-
-    public SimulationState CurrentSimulationState(ClientInputState inputState)
-    {
-        return new SimulationState
-        {
-            position = _localPlayer.GetComponent<PlayerController>().transform.position,
-            rotation = _localPlayer.GetComponent<PlayerController>().transform.rotation,
-            simulationFrame = inputState.simulationFrame
-        };
-    }
-    #endregion
     #region LiteNetLib overloads
     private void OnDisable()
     {
@@ -440,10 +273,10 @@ public class Client : NetworkManagerClient
         ClientUIController.Instance.onClientConnected.text = $"Disconned from the Server";
     }
 
-    public override void  OnPeerConnected(NetPeer peer)
+    public override void OnPeerConnected(NetPeer peer)
     {
         ClientUIController.Instance.OnEnableToogle();
-        Debug.Log(" You are connected is it to the Server ?? "+ peer.Id);
+        Debug.Log(" You are connected is it to the Server ?? " + peer.Id);
     }
     #endregion
 
@@ -492,7 +325,7 @@ public class Client : NetworkManagerClient
                 _remotePlayers.Add(remotePlayer);
             }
         }
-        
+
     }
     #endregion
     #region Inputs Of The Clients
@@ -504,153 +337,54 @@ public class Client : NetworkManagerClient
         float deltaMouseY = Mathf.Abs(currentNInput.MouseY - previousNInput.MouseY);
         float epsilon = 0f;
 
-         return (
-              currentNInput.Jump != previousNInput.Jump || currentNInput.Run != previousNInput.Run || deltaInputX > epsilon || deltaInputY > epsilon
-              || deltaMouseX > epsilon || deltaMouseY > epsilon || Mathf.Abs(currentNInput.InputX) > epsilon
-              || Mathf.Abs(currentNInput.InputY) > epsilon
-              );
+        return (
+             currentNInput.Jump != previousNInput.Jump || currentNInput.Run != previousNInput.Run || deltaInputX > epsilon || deltaInputY > epsilon
+             || deltaMouseX > epsilon || deltaMouseY > epsilon || Mathf.Abs(currentNInput.InputX) > epsilon
+             || Mathf.Abs(currentNInput.InputY) > epsilon
+             );
         //return currentNInput != previousNInput;
     }
     public void setPlayerInputs(Tools.NInput nInput)
     {
         currentNInput = nInput;
     }
-
-    void processPendingInput(PendingInput pendingInput)
-    {
-        MoveLocalplayer(pendingInput.nInput, pendingInput.nTime);
-    }
-
-    void processInputs()
-    {
-        float currentTime = Time.timeSinceLevelLoad;
-        float dt_sec = currentTime - _previousTime;
-        //!!!!!!!_pendingNInputs.Count == 0
-        //bool _needUpdate = UpdateInput();
-        //if (! _needUpdate) { return; } //Nothing to process
-        PendingInput pendingInput;
-
-        pendingInput = new PendingInput(currentNInput, dt_sec, _inputSeqNumber);
-        //Send the input to the server here
-        SendInputToServer(pendingInput);
-       
-        //If there is client side prediction enabled do it
-        //if (clientSidePrediction)
-        {
-            processPendingInput(pendingInput);
-        }
-        _pendingNInputs.Add(pendingInput);
-        _inputSeqNumber++;
-        _previousTime = currentTime;
-        previousNInput = currentNInput;
-    }
     #endregion
     #region Attempt of tick ! Works :-)
-    public struct ClientState
-    {
-        public Vector3 position;
-        public Quaternion rotation;
-    };
-    public struct ClientInput
-    {
-        public Tools.NInput inputs;
-        public ClientInput(Tools.NInput input)
-        {
-            this.inputs = input;
-        }
-    };
-    private ClientState[] client_state_buffer = new ClientState[1024];
-    private ClientInput[] client_input_buffer = new ClientInput[1024];
 
-    System.Random random = new System.Random();
+    //System.Random random = new System.Random();
 
-    void processInputs2()
+    void ProcessInputs()
     {
         if (!UpdateInput())
             return;
-
-        if (random.Next(10, 20) < 15)
-            SendInputToServer(new PendingInput(currentNInput, Time.fixedDeltaTime, _inputSeqNumber));
-        int buffer_slot = this._inputSeqNumber % 1024;
-        client_input_buffer[buffer_slot].inputs = currentNInput;
-        client_state_buffer[buffer_slot].position = _localPlayer.GetComponent<PlayerController>().transform.position;
-        client_state_buffer[buffer_slot].rotation = _localPlayer.GetComponent<PlayerController>().transform.rotation;
-
-        _localPlayer.GetComponent<PlayerController>().ApplyInput(currentNInput, Time.fixedDeltaTime);
-        previousNInput = currentNInput;
-        _inputSeqNumber++;
-    }
-
-    void MayBeProcessItDirectly(ServerState state)
-    {
-      
-        //_localPlayer.GetComponent<PlayerController>().transform.position = state.position;
-        //_localPlayer.GetComponent<PlayerController>().transform.rotation = state.rotation;
-        //return;
-        int buffer_slot = state.lastProcessedInput % 1024;
-        if (buffer_slot < 0)
+        InputPacket inputPacket = new InputPacket
         {
-            Debug.Log($"Requesting Buffer Slot {buffer_slot}");
-            Debug.Log($"state : {state}");
-            _localPlayer.GetComponent<PlayerController>().transform.position = state.position;
-            _localPlayer.GetComponent<PlayerController>().transform.rotation = state.rotation;
-            return;
-        }
-        Vector3 position_error = state.position - client_state_buffer[buffer_slot].position;
-        if (position_error.sqrMagnitude > 1e-6f)
-        {
-            //Debug.Log($" Local Player Position is wrong but lastProcessed {state.lastProcessedInput} but current tick : {_inputSeqNumber}");
-            _localPlayer.GetComponent<PlayerController>().transform.position = state.position;
-            _localPlayer.GetComponent<PlayerController>().transform.rotation = state.rotation;
-            int rewind_ticks = state.lastProcessedInput;
-            while (rewind_ticks < _inputSeqNumber)
-            {
-                Debug.Log("Rewinding");
-                buffer_slot = rewind_ticks % 1024;
-                client_input_buffer[buffer_slot].inputs = currentNInput;
-                client_state_buffer[buffer_slot].position = state.position;
-                client_state_buffer[buffer_slot].rotation = state.rotation;
-                _localPlayer.GetComponent<PlayerController>().ApplyInput(currentNInput, Time.fixedDeltaTime);
-                rewind_ticks++;
-            }
-        }
-    }
+            InputX = currentNInput.InputX,
+            InputY = currentNInput.InputY,
+            MouseX = currentNInput.MouseX,
+            MouseY = currentNInput.MouseY,
+            Jump = currentNInput.Jump,
+            Run = currentNInput.Run
+        };
+        inputPacket.NTime = Time.fixedDeltaTime;
+        float timestamp = Time.time;
+        inputPacket.Timestamp = timestamp;
+        // if (random.Next(10, 20) < 15)
+        SendInputToServer(inputPacket);
+        //Client side prediction
+        _localPlayer.GetComponent<PlayerController>().ApplyInput(currentNInput, inputPacket.NTime);
 
-    void processServerState2()
-    {
-        _serverStates.ForEach(state =>
-        {
-            if (state.peerId == Id)
-            {
-                int buffer_slot = state.lastProcessedInput % 1024;
-                if (buffer_slot < 0) {
-                    Debug.Log($"Requesting Buffer Slot {buffer_slot}");
-                    Debug.Log($"state : {state}");
-                    return;
-                }
-                Vector3 position_error = state.position - client_state_buffer[buffer_slot].position;
-                if (position_error.sqrMagnitude > 1e-6f)
-                {
-                    Debug.Log(" Local Player ");
-                    _localPlayer.GetComponent<PlayerController>().transform.position = state.position;
-                    _localPlayer.GetComponent<PlayerController>().transform.rotation = state.rotation;
-
-                    int rewind_ticks = state.lastProcessedInput;
-                    while (rewind_ticks < _inputSeqNumber)
-                    {
-                        Debug.Log("Rewinding");
-                        buffer_slot = rewind_ticks % 1024;
-                        client_input_buffer[buffer_slot].inputs = currentNInput;
-                        client_state_buffer[buffer_slot].position = state.position;
-                        client_state_buffer[buffer_slot].rotation = state.rotation;
-                        _localPlayer.GetComponent<PlayerController>().ApplyInput(currentNInput, Time.fixedDeltaTime);
-                        rewind_ticks++;
-                    }
-                }
-            }
+        _predictedPackages.Add(new StateBuffer {
+            Position = _localPlayer.GetComponent<PlayerController>().transform.position,
+            Rotation = _localPlayer.GetComponent<PlayerController>().transform.rotation,
+            AnimSpeed = _localPlayer.GetComponent<PlayerController>().animSpeed,
+            CamPosition = _localPlayer.GetComponent<PlayerController>().cameraTrans.position,
+            CamRotation = _localPlayer.GetComponent<PlayerController>().cameraTrans.rotation,
+            Timestamp = timestamp,
         });
-        _serverStates.Clear();
+        previousNInput = currentNInput;
     }
+
     #endregion
     #region Packets from The Server
 
@@ -664,7 +398,7 @@ public class Client : NetworkManagerClient
             case PacketType.Join:
                 {
                     int peerId = reader.GetInt();
-                    if (!isConnected){
+                    if (!isConnected) {
                         isConnected = true;
                         netPeer = peer;
                         Id = peerId;
@@ -684,7 +418,7 @@ public class Client : NetworkManagerClient
                 break;
             case PacketType.Spawn:
                 {
-                    SpawnPacket spawnPacket =  new SpawnPacket();
+                    SpawnPacket spawnPacket = new SpawnPacket();
                     spawnPacket.Deserialize(reader);
                     SpawnPlayer(spawnPacket);
                 }
@@ -706,7 +440,7 @@ public class Client : NetworkManagerClient
                 {
                     PlayerStatePacket playerStatePacket = new PlayerStatePacket();
                     playerStatePacket.Deserialize(reader);
-                    ServerState serverState =  new ServerState(playerStatePacket);
+                    ServerState serverState = new ServerState(playerStatePacket);
                     OnServerStatePacketReceive(serverState);
                     Debug.Log($"Server State Received For Player : {serverState.peerId}");
                 }
@@ -738,191 +472,96 @@ public class Client : NetworkManagerClient
     void ServerAuthoritativeState(ServerState serverState)
     {
         if (_localPlayer) {
-            _localPlayer.ApplyServerState(serverState.position, serverState.rotation, serverState.animSpeed, serverState.camPosition, serverState.camRotation);
-            serverState.processed = true;
+            //Reconciliation will be needed here
+            float correctionThreshold = 0.001f;
+            var transmittedPackage = _predictedPackages.Where(x => x.Timestamp == serverState.Timestamp).FirstOrDefault();
+            if (transmittedPackage == null)
+            {
+                Debug.Log("You should do something here :-) ");
+                // _localPlayer.ApplyServerState(serverState.position, serverState.rotation, serverState.animSpeed, serverState.camPosition, serverState.camRotation);
+                return;
+            }
+            if (Vector3.Distance(transmittedPackage.Position,
+                serverState.position) > correctionThreshold)
+            {
+                Debug.Log("Reconciliation");
+                _localPlayer.ApplyServerState(serverState.position, serverState.rotation, serverState.animSpeed, serverState.camPosition, serverState.camRotation);
+            }
+            //Clear all pedicted
+            _predictedPackages.RemoveAll(x => x.Timestamp <= serverState.Timestamp);
         }
         else { Debug.Log("But Why ???"); return; }
     }
 
-   
-
-    void ServerReconciliation(ServerState serverState)
-    {
-     //   if (serverReconciliation)
-        {
-            List<PendingInput> toRemove = new List<PendingInput>();
-            _pendingNInputs.ForEach(pendingInput =>
-            {
-                if (pendingInput.sequenceNumber <= serverState.lastProcessedInput)
-                {
-                    toRemove.Add(pendingInput);
-                    //_pendingNInputs.Remove(pendingInput);
-                }
-               else
-                {
-                    //Apply the input
-                    {
-                       processPendingInput(pendingInput);
-                    }
-                }
-
-            });
-            toRemove.ForEach(pendingInput =>
-            {
-                _pendingNInputs.Remove(pendingInput);
-            });
-            toRemove.Clear();
-        }
-      // else
-        {
-            //Drop all recorded inputs
-         //   _pendingNInputs.Clear();
-        }
-
-    }
     #endregion
     #region OnServerStatePacket Receive for clients states
-    void OnServerStatePacketReceive(ServerState serverState)
+
+     void LagCompensation()
     {
-        if (serverState.peerId != Id)
-        {
-            if (_remotePlayers.Count < 1) { return; }
-            PlayerViewClient foundPlayer = _remotePlayers.Find(player => player.Id == serverState.peerId);
-            if (foundPlayer == null) { Debug.Log($"Should never happen ! Remote Players Number : {_remotePlayers.Count}"); return; }
-            {
-                //foundPlayer.SetTransform(serverState.position, serverState.rotation);
-                //Add the state to the positions buffer
-                StateBuffer stateBuffer = new StateBuffer();
-                stateBuffer.Position = serverState.position;
-                stateBuffer.Rotation = serverState.rotation;
-                stateBuffer.CamPosition = serverState.camPosition;
-                stateBuffer.CamRotation = serverState.camRotation;
-                stateBuffer.AnimSpeed = serverState.animSpeed;
-                stateBuffer.Timestamp = Time.timeSinceLevelLoad;
-
-                //latestPos = serverState.position;
-                //latestRot = serverState.rotation;
-
-                //currentTime = 0f;
-                //lastPacketTime = currentPacketTime;
-                //currentPacketTime = Time.time;//Noramlly info.SentServerTime (meaning time when it was sent to the server or client ?)
-                //stateAtLastPacket = new StateBuffer();
-                //stateAtLastPacket.Position = foundPlayer.GetComponent<PlayerController>().transform.position;
-                //stateAtLastPacket.Rotation = foundPlayer.GetComponent<PlayerController>().transform.rotation;
-
-                //positionAtLastPacket = stateAtLastPacket.Position;
-                //rotationAtLastPacket = stateAtLastPacket.Rotation;
-
-                ///* positionAtLastPacket = transform.position;
-                // rotationAtLastPacket = transform.rotation;*/
-                ////foundPlayer.position_buff.add({ timestamp,  position, rotation })
-                foundPlayer.StateBuffers.Add(stateBuffer);
-            }
-        }
-        else {
-            SimulationState message = new SimulationState();
-            message.position = serverState.position;
-            message.rotation = serverState.rotation;
-            message.simulationFrame = serverState.lastProcessedInput;
-            message.animSpeed = serverState.animSpeed;
-            message.camPosition = serverState.camPosition;
-            message.camRotation = serverState.camRotation;
-            message.peerId = serverState.peerId;
-            /*     Debug.Log($"Position : ({message.position.x}, {message.position.y}, {message.position.z})" +
-                     $"Rotation({message.rotation.x}, {message.rotation.y}, {message.rotation.z}, {message.rotation.z})");*/
-              OnServerSimulationStateReceived(message);
-            //MayBeProcessItDirectly(serverState);
-          //  _serverStates.Add(serverState);
-        }
-        
-    }
-    private void OnServerSimulationStateReceived(SimulationState message)
-    {
-        if (serverSimulationState == null)
-        {
-            serverSimulationState = new SimulationState();
-            serverSimulationState.simulationFrame = -1;
-        }
-        // Only register newer SimulationState's. 
-        if (serverSimulationState?.simulationFrame < message.simulationFrame)
-        {
-            serverSimulationState = message;
-            _localPlayer.GetComponent<PlayerController>().transform.position = message.position;
-            _localPlayer.GetComponent<PlayerController>().transform.rotation = message.rotation;
-         //   Debug.Log("Registering New Server State");
-        }
-        else
-        {
-            if (serverSimulationState != null) { Debug.Log($"Received Server State " + message.simulationFrame + " current State : " + serverSimulationState.simulationFrame); }
-        }
-    }
-
-    void MoveLocalplayer(Tools.NInput nInput, float fpsRate)
-    {
-        if (!_localPlayer) { return; }
-        _localPlayer.HandleInput(nInput, fpsRate);
-    }
-
-    void RemotePlayersMove(ServerState serverState)
-    {
-        PlayerViewClient foundPlayer = _remotePlayers.Find(player => player.Id == serverState.peerId);
-        if (!foundPlayer)
-        {
-            return;
-        }
-      if (!interpolation)
-        {
-           foundPlayer.ApplyServerState(serverState.position, serverState.rotation, serverState.animSpeed, serverState.camPosition, serverState.camRotation);
-            Debug.Log("Lag Compensation is off");
-        }
-        else
-        {
-            Debug.Log("Lag Compensation is on");
-           EntityInterpolation(foundPlayer, 0f);
-        }
-    }
-
-    void EntityInterpolation(PlayerViewClient remotePlayer, float render_timestamp)
-    {
-        Vector3 pos1 = remotePlayer.StateBuffers[0].Position;
-        Vector3 pos2 = remotePlayer.StateBuffers[1].Position;
-        Quaternion rot1 = remotePlayer.StateBuffers[0].Rotation;
-        Quaternion rot2 = remotePlayer.StateBuffers[1].Rotation;
-        Vector3 _camPos1 = remotePlayer.StateBuffers[0].CamPosition;
-        Vector3 _camPos2 = remotePlayer.StateBuffers[1].CamPosition;
-        Quaternion _camRot1 = remotePlayer.StateBuffers[0].CamRotation;
-        Quaternion _camRot2 = remotePlayer.StateBuffers[1].CamRotation;
-        float _animSpeed1 = remotePlayer.StateBuffers[0].AnimSpeed;
-        float _animSpeed2 = remotePlayer.StateBuffers[1].AnimSpeed;
-
-        float timeToReachGoal = remotePlayer.StateBuffers[1].Timestamp - remotePlayer.StateBuffers[0].Timestamp;
-        currentTime = render_timestamp - remotePlayer.StateBuffers[0].Timestamp;
-        float t__ = (currentTime / timeToReachGoal);
-
-        Vector3 _newPos = Vector3.Lerp(pos1, pos2, t__);
-        Quaternion _newRot = Quaternion.Lerp(rot1, rot2, t__);
-        Vector3 _newCamPos = Vector3.Lerp(_camPos1, _camPos2, t__);
-        Quaternion _newCamRot = Quaternion.Lerp(_camRot1, _camRot2, t__);
-        float _newAnimSpeed = Mathf.Lerp(_animSpeed1, _animSpeed2, t__);
-        remotePlayer.ApplyServerState(_newPos, _newRot, _newAnimSpeed, _newCamPos, _newCamRot);
-    }
-
-    void EntitiesInterpolation()
-    {
-        float now = Time.timeSinceLevelLoad;
-        float render_timestamp = now - 1.0f / AuthServer.SERVER_UPDATE_RATE;
         _remotePlayers.ForEach(remotePlayer =>
         {
-            while (remotePlayer.StateBuffers.Count >= 2 && (remotePlayer.StateBuffers[1].Timestamp <= render_timestamp))
-            {
-                remotePlayer.StateBuffers.RemoveAt(0);
-            }
-            if (remotePlayer.StateBuffers.Count >= 2 && (remotePlayer.StateBuffers[0].Timestamp <= render_timestamp && render_timestamp < remotePlayer.StateBuffers[1].Timestamp))
-            {
-                EntityInterpolation(remotePlayer, render_timestamp);
-            }
-        });
+        float latestAnimSpeed = remotePlayer.remoteClientState.latestAnimSpeed;
+        Vector3 latestPos = remotePlayer.remoteClientState.latestPos;
+        Quaternion latestRot = remotePlayer.remoteClientState.latestRot;
+        Vector3 latestCamPos = remotePlayer.remoteClientState.latestCamPos;
+        Quaternion latestCamRot = remotePlayer.remoteClientState.latestCamRot;
+        //Lag compensation
+        float currentTime = remotePlayer.remoteClientState.currentTime;
+        double currentPacketTime = remotePlayer.remoteClientState.currentPacketTime;
+        double lastPacketTime = remotePlayer.remoteClientState.lastPacketTime;
+        float animSpeedAtLastPacket = remotePlayer.remoteClientState.animSpeedAtLastPacket;
+        Vector3 positionAtLastPacket = remotePlayer.remoteClientState.positionAtLastPacket;
+        Quaternion rotationAtLastPacket = remotePlayer.remoteClientState.rotationAtLastPacket;
+        Vector3 camPositionAtLastPacket = remotePlayer.remoteClientState.camPositionAtLastPacket;
+        Quaternion camRotationAtLastPacket = remotePlayer.remoteClientState.camRotationAtLastPacket;
+
+        currentTime += Time.deltaTime;
+        double timeToReachGoal = currentPacketTime - lastPacketTime;
+        //Update remote player
+        remotePlayer.ApplyServerState(
+            Vector3.Lerp(positionAtLastPacket, latestPos, (float)(currentTime / timeToReachGoal)),
+       Quaternion.Lerp(rotationAtLastPacket, latestRot, (float)(currentTime / timeToReachGoal)),
+       Mathf.Lerp(animSpeedAtLastPacket, latestAnimSpeed, (float)(currentTime / timeToReachGoal)),
+       Vector3.Lerp(camPositionAtLastPacket, latestCamPos, (float)(currentTime / timeToReachGoal)),
+       Quaternion.Lerp(camRotationAtLastPacket, latestCamRot, (float)(currentTime / timeToReachGoal)));
+        remotePlayer.remoteClientState.currentTime = currentTime;
+    });
+}
+
+void OnServerStatePacketReceive(ServerState serverState)
+{
+    if (serverState.peerId != Id)
+    {
+        Debug.Log("Not me");
+        if (_remotePlayers.Count < 1) { return; }
+        PlayerViewClient foundPlayer = _remotePlayers.Find(player => player.Id == serverState.peerId);
+        if (foundPlayer == null) { Debug.Log($"Should never happen ! Remote Players Number : {_remotePlayers.Count}"); return; }
+        {
+
+            foundPlayer.remoteClientState.currentTime = 0.0f;
+            foundPlayer.remoteClientState.lastPacketTime = foundPlayer.remoteClientState.currentPacketTime;
+            foundPlayer.remoteClientState.currentPacketTime = Time.timeSinceLevelLoad;
+
+            foundPlayer.remoteClientState.latestAnimSpeed = serverState.animSpeed;
+            foundPlayer.remoteClientState.latestPos = serverState.position;
+            foundPlayer.remoteClientState.latestRot = serverState.rotation;
+            foundPlayer.remoteClientState.latestCamPos = serverState.camPosition;
+            foundPlayer.remoteClientState.latestCamRot = serverState.camRotation;
+
+            foundPlayer.remoteClientState.animSpeedAtLastPacket = foundPlayer.GetComponent<PlayerController>().animSpeed;
+            foundPlayer.remoteClientState.positionAtLastPacket = foundPlayer.GetComponent<PlayerController>().transform.position;
+            foundPlayer.remoteClientState.rotationAtLastPacket = foundPlayer.GetComponent<PlayerController>().transform.rotation;
+            foundPlayer.remoteClientState.camPositionAtLastPacket = foundPlayer.GetComponent<PlayerController>().cameraTrans.position;
+            foundPlayer.remoteClientState.camRotationAtLastPacket = foundPlayer.GetComponent<PlayerController>().cameraTrans.rotation;
+        }
     }
+    else
+    {
+        ServerAuthoritativeState(serverState);
+    }
+
+}
+
     #endregion
     #region Remove Self or Client on disconnection
     void SelfRemove()
@@ -930,7 +569,7 @@ public class Client : NetworkManagerClient
         Destroy(_localPlayer.GetComponent<PlayerViewClient>());
         Destroy(_localPlayer);
         _clients.Remove(Id);
-        // Destroy(this.gameObject);
+        Destroy(gameObject);
     }
 
     void OthersRemove(int id)
@@ -1042,25 +681,17 @@ public class Client : NetworkManagerClient
     }
 
     //protected void SendInputToServer(InputPacket packet)
-    protected void SendInputToServer(PendingInput pendingInput)
+    protected void SendInputToServer(InputPacket inputPacket)
     {
         if (netPeer == null)
         {
             Debug.Log(" Not connected Yet ");
             return;
         }
-        // NetDataWriter netData = inputPacket.
         NetDataWriter inputData = new NetDataWriter();
+        inputPacket.Id = Id;
         inputData.Put((int)PacketType.Movement);
-        inputData.Put(Id);
-        inputData.Put(pendingInput.sequenceNumber);
-        inputData.Put(pendingInput.nTime);
-        inputData.Put(pendingInput.nInput.InputX);
-        inputData.Put(pendingInput.nInput.InputY);
-        inputData.Put(pendingInput.nInput.Jump);
-        inputData.Put(pendingInput.nInput.Run);
-        inputData.Put(pendingInput.nInput.MouseX);
-        inputData.Put(pendingInput.nInput.MouseY);
+        inputPacket.Serialize(inputData);
         netPeer.Send(inputData, DeliveryMethod.ReliableOrdered);
     }
 

@@ -27,13 +27,45 @@ public class StateBuffer
     {
         return $"Position({Position.x}, {Position.y}, {Position.z}) Rotation({Rotation.x}, {Rotation.y}, {Rotation.z}, {Rotation.w}) Timestamp {Timestamp}";
     }
-}
+};
+
+public class RemoteClientState
+{
+    internal float latestAnimSpeed;
+    internal Vector3 latestPos;
+    internal Quaternion latestRot;
+    internal Vector3 latestCamPos;
+    internal Quaternion latestCamRot;
+    //Lag compensation
+    internal float currentTime;
+    internal double currentPacketTime;
+    internal double lastPacketTime;
+    internal float animSpeedAtLastPacket;
+    internal Vector3 positionAtLastPacket;
+    internal Quaternion rotationAtLastPacket;
+    internal Vector3 camPositionAtLastPacket;
+    internal Quaternion camRotationAtLastPacket;
+
+    public RemoteClientState()
+    {
+        currentTime = 0;
+        currentPacketTime = 0;
+        lastPacketTime = 0;
+        animSpeedAtLastPacket = 0f;
+        positionAtLastPacket = Vector3.zero;
+        rotationAtLastPacket = Quaternion.identity;
+        camPositionAtLastPacket = Vector3.zero;
+        camRotationAtLastPacket = Quaternion.identity;
+    }
+
+};
+
 public class PlayerViewClient : MonoBehaviour
 {
     private int                             _id;
     private Tools.NInput                    _playerInput;
     private List<MonoBehaviour>             _rpcMonoBehaviours;
-    public List<StateBuffer>        StateBuffers;
+    internal RemoteClientState remoteClientState; 
 
     public bool isReady { get; set; }
 
@@ -49,7 +81,7 @@ public class PlayerViewClient : MonoBehaviour
         GetComponent<Player>().IsLocalPlayer = _isLocalPlayer;
         if (!_isLocalPlayer)
         {
-            StateBuffers = new List<StateBuffer>();
+            remoteClientState = new RemoteClientState();
         }
     }
 
@@ -86,7 +118,6 @@ public class PlayerViewClient : MonoBehaviour
 
     public void ApplyServerState(Vector3 pos, Quaternion quaternion, float _animSpeed, Vector3 camPos, Quaternion camRot)
     {
-        if (!isMine) { quaternion.eulerAngles = new Vector3(quaternion.eulerAngles.x, -quaternion.eulerAngles.y, quaternion.eulerAngles.z); }
         GetComponent<PlayerController>().SetState(pos, quaternion, _animSpeed, camPos, camRot);
     }
 
@@ -123,7 +154,6 @@ public class PlayerViewClient : MonoBehaviour
         _playerInput.Run = Input.GetKey(KeyCode.LeftShift);
         _playerInput.MouseX = Input.GetAxis("Mouse X");
         _playerInput.MouseY =  Input.GetAxis("Mouse Y");
-
         UpdateInput(_playerInput);
     }
 

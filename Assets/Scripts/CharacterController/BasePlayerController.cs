@@ -70,6 +70,8 @@ public class BasePlayerController : MonoBehaviour
 
         velocityY += gravity * Time.deltaTime;
         Vector3 move = transform.forward * currentMoveSpeed + velocityY * Vector3.up;
+        //move = Vector3.zero;
+        //Debug.Log($"move : {move}");
         controller.Move(move * Time.deltaTime);
         currentMoveSpeed = new Vector2(controller.velocity.x, controller.velocity.z).magnitude;
         if (controller.isGrounded)

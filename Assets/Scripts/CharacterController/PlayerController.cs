@@ -37,8 +37,6 @@ public class PlayerController : MonoBehaviourRPC
     bool running = false;
     float moveSmoothTime = 0.12f;
 
-
-
     /*
      *  Properties */
 
@@ -71,6 +69,8 @@ public class PlayerController : MonoBehaviourRPC
     {
         yaw += nInput.MouseX * mouseSensitivity;
         pitch -= nInput.MouseY * mouseSensitivity;
+      /*  yaw += Input.GetAxis("Mouse X") * mouseSensitivity;
+        pitch -= Input.GetAxis("Mouse Y") * mouseSensitivity;*/
         pitch = Mathf.Clamp(pitch, pitchMinMax.x, pitchMinMax.y);
         targetRotation = new Vector3(pitch, yaw);
         cameraTrans.eulerAngles = targetRotation;
@@ -126,10 +126,6 @@ public class PlayerController : MonoBehaviourRPC
         }
        
     }
-    float prevAnim = -1f;
-    float _prevt = 0f;
-    float _nowt = 0f;
-    float _currTime = 0f;
 
     public void Spawn(Vector3 position, Quaternion rotation, Vector3 camPos, Quaternion camRot)
     {
@@ -141,30 +137,14 @@ public class PlayerController : MonoBehaviourRPC
 
     public void SetState(Vector3 position, Quaternion rotation, float _animSpeed, Vector3 camPos, Quaternion camRot)
     {
-
         if (!isReady) { return; }
-
-        if (prevAnim < 0f)
-        {
-            _prevt = 0f;// Time.timeSinceLevelLoad;
-            prevAnim = _animSpeed;
-            Debug.Log("Always True");
-        }
-       // _nowt = Time.timeSinceLevelLoad;
-        _nowt = Time.time;
-        _currTime += Time.deltaTime;
-        float dt_sec = _nowt - _prevt;
-
-     //   animator.SetFloat(speedHashCode, Mathf.Lerp(prevAnim, _animSpeed, _currTime / (_nowt - _prevt)), moveSmoothTime, Time.deltaTime);
-        //animator.SetFloat(speedHashCode, _animSpeed, moveSmoothTime, Time.deltaTime);
         transform.position = position;
         transform.rotation = rotation;
         cameraTrans.position = camPos;
         cameraTrans.rotation = camRot;
+        animSpeed = _animSpeed;
         animator.SetFloat(speedHashCode, _animSpeed);
         //LateCameraUpdatePosition();
-        prevAnim = _animSpeed;
-        _prevt = _nowt;
     }
 
     private void Update()
